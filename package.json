@@ -1,0 +1,23 @@
+{
+  "name": "ghostfleet-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ghostfleet desde el navegador: la flota de Claude Code para un equipo chico, con clics en vez de comandos.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:demo": "node scripts/dev.mjs --demo",
+    "build": "vite build",
+    "start": "node server/index.mjs",
+    "demo": "node server/index.mjs --demo"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "2.10.2",
+    "preact": "10.26.9",
+    "vite": "6.3.5"
+  }
+}

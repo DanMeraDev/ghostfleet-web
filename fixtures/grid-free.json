@@ -1,0 +1,72 @@
+{
+  "project": "toolbox",
+  "profile": "work",
+  "sub": null,
+  "counts": {
+    "need_you": 0,
+    "working": 1,
+    "ready": 1,
+    "parked": 0,
+    "limit": 0,
+    "interrupted": 0
+  },
+  "cards": [
+    {
+      "name": "search-index",
+      "label": null,
+      "status": "working",
+      "team_status": null,
+      "folder": "search-index",
+      "branch": "feat/search-index",
+      "agent": "claude",
+      "pr": null,
+      "msg": "Rebuilding the index so the query path has something to read.",
+      "age": 30,
+      "attached": false,
+      "sched": null,
+      "limit_at": null,
+      "lead": false,
+      "exited": false,
+      "parent": null,
+      "workers": null,
+      "sub_head": false
+    },
+    {
+      "name": "cli-flags",
+      "label": null,
+      "status": "ready",
+      "team_status": null,
+      "folder": "cli-flags",
+      "branch": "feat/cli-flags",
+      "agent": "claude",
+      "pr": null,
+      "msg": "Flag parsing done, help text regenerated.",
+      "age": 900,
+      "attached": false,
+      "sched": null,
+      "limit_at": null,
+      "lead": false,
+      "exited": false,
+      "parent": null,
+      "workers": null,
+      "sub_head": false
+    }
+  ],
+  "free_worktrees": [
+    {
+      "path": "/Users/you/gf-demo/toolbox-3",
+      "branch": "feat/x",
+      "task": "rework the CSV column mapper"
+    },
+    {
+      "path": "/Users/you/gf-demo/grid-json",
+      "branch": "feat/grid-json",
+      "task": ""
+    },
+    {
+      "path": "/Users/you/gf-demo/stack-view",
+      "branch": "feat/stack-view",
+      "task": "landed in #36, safe to reclaim"
+    }
+  ]
+}

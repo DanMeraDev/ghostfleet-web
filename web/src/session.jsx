@@ -1,0 +1,261 @@
+import { useState, useEffect, useRef } from 'preact/hooks';
+import { api } from './api.js';
+import { statusOf, StatusPill, Avatar, Btn, usePoll, toast, Markdown, Confirm, Modal, sinceTs } from './ui.jsx';
+import { render as renderAnsi } from './vendor/ansi.js';
+
+// Claude's dialog speaks English; the buttons say what pressing them does.
+function optionText(label) {
+  const l = String(label || '');
+  if (/^yes,? and don.?t ask again/i.test(l)) return { text: 'Sí, y no volver a preguntar', sub: l, kind: 'yes' };
+  if (/^yes,? allow all edits/i.test(l)) return { text: 'Sí, permitir todas las ediciones de esta sesión', sub: l, kind: 'yes' };
+  if (/^yes/i.test(l)) return { text: 'Sí, permitir', sub: l, kind: 'yes' };
+  if (/^no/i.test(l)) return { text: 'No, decirle otra cosa', sub: l, kind: 'no' };
+  return { text: l, sub: '', kind: '' };
+}
+
+function PromptCard({ prompt, onAnswer, busy }) {
+  const [typed, setTyped] = useState('');
+  if (prompt.kind === 'permission') {
+    return (
+      <div class="ask permission">
+        <div class="ask-head"><b>● Claude pide permiso</b><span>{prompt.tool || 'una herramienta'}</span></div>
+        {prompt.command ? <pre class="ask-cmd">{prompt.command.replace(/╌+/g, '').trim()}</pre> : null}
+        <div class="ask-opts">
+          {(prompt.options || []).map(o => {
+            const t = optionText(o.label);
+            return (
+              <button key={o.n} disabled={busy} class={`opt ${t.kind}`} onClick={() => onAnswer(String(o.n), false)}>
+                <span class="n">{o.n}</span><span><b>{t.text}</b>{t.sub ? <small>{t.sub}</small> : null}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p class="muted small">Revisa el comando antes de permitirlo: corre en el worktree de esta sesión, con tu cuenta.</p>
+      </div>
+    );
+  }
+  const tabs = (prompt.tabs || []).filter(t => !t.submit);
+  return (
+    <div class="ask question">
+      <div class="ask-head"><b>● Claude te pregunta</b>
+        {tabs.length > 1 ? <span>pregunta {prompt.tab != null ? prompt.tab + 1 : '?'} de {tabs.length}</span> : null}
+        {prompt.submit ? <span>revisar y enviar</span> : null}</div>
+      <p class="ask-q">{prompt.question}</p>
+      {prompt.typing ? (
+        <form class="row" onSubmit={(e) => { e.preventDefault(); if (typed.trim()) onAnswer(typed.trim(), false); }}>
+          <input class="grow" value={typed} onInput={(e) => setTyped(e.currentTarget.value)} placeholder="Escribe tu respuesta" autoFocus />
+          <Btn kind="primary" type="submit" disabled={busy || !typed.trim()}>Enviar</Btn>
+        </form>
+      ) : (
+        <div class="ask-opts">
+          {(prompt.options || []).map(o => (
+            <button key={o.n} disabled={busy} class={`opt${o.chosen ? ' chosen' : ''}`} onClick={() => onAnswer(String(o.n), true)}>
+              <span class="n">{o.n}</span><span><b>{o.label}</b>{o.description ? <small>{o.description}</small> : null}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Terminal({ pane }) {
+  const ref = useRef(null);
+  const stick = useRef(true);
+  const html = pane ? renderAnsi(pane).html : '';
+  useEffect(() => { const n = ref.current; if (n && stick.current) n.scrollTop = n.scrollHeight; }, [html]);
+  return (
+    <div class="term" ref={ref} onScroll={(e) => { const n = e.currentTarget; stick.current = n.scrollHeight - n.scrollTop - n.clientHeight < 40; }}>
+      {pane == null ? <p class="muted">Leyendo la terminal…</p> : <pre class="pane" dangerouslySetInnerHTML={{ __html: html }} />}
+    </div>
+  );
+}
+
+function Chat({ ctx, msgs, queued, older, onOlder }) {
+  const ref = useRef(null);
+  const stick = useRef(true);
+  const last = msgs.length ? `${msgs.length}:${msgs[msgs.length - 1].ts}` : '';
+  useEffect(() => { const n = ref.current; if (n && stick.current) n.scrollTop = n.scrollHeight; }, [last, queued.length]);
+  return (
+    <div class="chat" ref={ref} onScroll={(e) => { const n = e.currentTarget; stick.current = n.scrollHeight - n.scrollTop - n.clientHeight < 60; }}>
+      {older ? <button class="link center" onClick={onOlder}>Cargar mensajes anteriores</button> : null}
+      {!msgs.length ? <p class="muted center">Todavía no hay mensajes en esta sesión.</p> : null}
+      {msgs.map((m, i) => {
+        if (m.role === 'tools') {
+          const tools = m.tools || [];
+          const names = [...new Set(tools.map(t => t.name))];
+          return (
+            <details key={`${m.ts}-${i}`} class="tools">
+              <summary>⚙ {tools.length} {tools.length === 1 ? 'acción' : 'acciones'} · {names.slice(0, 4).join(', ')}{names.length > 4 ? '…' : ''}<span class="when">{sinceTs(m.ts)}</span></summary>
+              <ul>{tools.map((t, j) => <li key={j}><b>{t.name}</b> <span>{t.detail}</span></li>)}</ul>
+            </details>
+          );
+        }
+        const by = m.by ? ctx.usersById[m.by] : null;
+        return (
+          <div key={`${m.ts}-${i}`} class={`msg ${m.role === 'user' ? 'me' : 'ai'}`}>
+            <div class="who">
+              {m.role === 'user'
+                ? <>{by ? <><Avatar user={by} size={18} /> {by.name}</> : 'Instrucción'}</>
+                : 'Claude'}
+              <span class="when">{sinceTs(m.ts)}</span>
+            </div>
+            <div class="bubble">{m.role === 'user' ? <p class="plain">{m.text}</p> : <Markdown text={m.text} />}</div>
+          </div>
+        );
+      })}
+      {queued.map((q, i) => (
+        <div key={`q${i}`} class="msg me pending">
+          <div class="who">En cola · se entrega cuando termine el turno</div>
+          <div class="bubble"><p class="plain">{q.text}</p></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
+  const [tab, setTab] = useState('chat');
+  const [extra, setExtra] = useState([]);      // older pages, loaded on demand
+  const [before, setBefore] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(null);
+  const [rename, setRename] = useState(null);
+  const [menu, setMenu] = useState(false);
+  const typing = useRef(false);
+
+  const sess = usePoll(() => api.session(project, name), 3000, [project, name]);
+  const pane = usePoll(() => api.pane(project, name), 2500, [project, name]);
+  useEffect(() => { setBefore(sess.data?.next_before ?? null); }, [sess.data?.next_before]);
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) api.presence(project, name, typing.current).catch(() => {}); }, 5000);
+    return () => clearInterval(t);
+  }, [project, name]);
+
+  const st = card ? statusOf(card) : (sess.data?.status || 'unknown');
+  const owner = card?.owner || sess.data?.owner || null;
+  const prompt = pane.data?.prompt || null;
+  const others = (pane.data?.here || []).filter(h => h.user !== ctx.me.id);
+
+  const act = async (tool, args = {}, opts = {}) => {
+    setBusy(true);
+    try {
+      const r = await api.act(tool, { project, session: name, ...args }, opts);
+      if (r.queued === 'question') toast('Quedó en cola: la sesión tiene una pregunta pendiente. Respóndela primero.', '');
+      else if (r.queued) toast('Quedó en cola: se entrega cuando termine el turno actual.', '');
+      onChanged(); sess.reload(); pane.reload();
+      return r;
+    } catch (e) {
+      if (e.body?.changed) { toast('El pedido cambió mientras lo mirabas; no se envió nada. Revisa de nuevo.', 'bad'); pane.reload(); }
+      else toast(e.message, 'bad');
+      return null;
+    } finally { setBusy(false); }
+  };
+  const answer = (text, noEnter) => act('fleet_answer', { text, no_enter: noEnter, expect: prompt?.fingerprint });
+  const sendDraft = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    const r = await act('fleet_send', { prompt: text });
+    if (r) { setDraft(''); typing.current = false; }
+  };
+  const loadOlder = async () => {
+    try {
+      const r = await api.session(project, name, before);
+      setExtra(x => [...(r.messages || []), ...x]); setBefore(r.next_before ?? null);
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+
+  const stop = (reclaim) => setConfirm({
+    title: reclaim ? 'Detener y borrar el worktree' : 'Detener la sesión',
+    action: reclaim ? 'Detener y borrar' : 'Detener', danger: true,
+    typed: reclaim ? name : null,
+    body: reclaim
+      ? <p>Se cierra <b>{name}</b> y se borra su worktree. ghostfleet solo lo borra si no hay cambios sin guardar y la rama está subida o mergeada; si no, la detiene igual y deja la carpeta, diciendo por qué.</p>
+      : <p>Se cierra <b>{name}</b> para siempre. Su worktree y su rama quedan como están, y la conversación se conserva.</p>,
+    onYes: async () => { const r = await act('fleet_stop', reclaim ? { reclaim: true } : {}, { confirm: true }); if (r) { toast(r.text?.split('\n')[0] || 'Detenida', 'good'); onGone(); } },
+  });
+
+  const msgs = [...extra, ...(sess.data?.messages || [])];
+  const parked = st === 'parked';
+  return (
+    <section class="session">
+      <header class="sess-head">
+        <div class="sess-title">
+          <button class="link back" onClick={onGone} aria-label="Volver">←</button>
+          <h1>{name}</h1>
+          <StatusPill status={st} />
+          {card?.branch ? <span class="branch">⎇ {card.branch}</span> : null}
+          {card?.pr ? <span class="tag pr">PR {card.pr}</span> : null}
+        </div>
+        <div class="sess-tools">
+          <label class="owner-pick" title="Responsable de esta sesión">
+            <Avatar user={owner ? ctx.usersById[owner] : null} size={24} />
+            <select value={owner || ''} onChange={async (e) => {
+              try { await api.assign(project, name, e.currentTarget.value || null); onChanged(); sess.reload(); }
+              catch (x) { toast(x.message, 'bad'); }
+            }}>
+              <option value="">Sin responsable</option>
+              {ctx.users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </label>
+          {st === 'working' ? <Btn kind="ghost sm" disabled={busy} onClick={() => act('fleet_interrupt')} title="Corta el turno actual, como apretar Esc">⏹ Interrumpir</Btn> : null}
+          {st === 'asleep' ? <Btn kind="ghost sm" disabled={busy} onClick={() => act('fleet_wake')}>☾ Despertar</Btn> : null}
+          {st === 'lost' ? <Btn kind="ghost sm" disabled={busy} onClick={() => act('fleet_reopen')}>↺ Reabrir</Btn> : null}
+          {!card?.lead && !['asleep', 'lost'].includes(st)
+            ? <Btn kind="ghost sm" disabled={busy} onClick={() => act(parked ? 'fleet_resume' : 'fleet_pause')}>{parked ? '▶ Reanudar' : '⏸ Pausar'}</Btn> : null}
+          <div class="menu-wrap">
+            <Btn kind="ghost sm" onClick={() => setMenu(m => !m)} aria-expanded={menu}>Más ▾</Btn>
+            {menu ? (
+              <div class="menu" onMouseLeave={() => setMenu(false)}>
+                <button onClick={() => { setMenu(false); setRename(name); }}>Renombrar…</button>
+                {!card?.lead ? <button onClick={() => { setMenu(false); stop(false); }}>Detener sesión…</button> : null}
+                {!card?.lead ? <button class="danger" onClick={() => { setMenu(false); stop(true); }}>Detener y borrar worktree…</button> : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        {others.length ? (
+          <p class="presence">
+            {others.map(h => <Avatar key={h.user} user={ctx.usersById[h.user]} size={18} />)}
+            {' '}{others.map(h => ctx.usersById[h.user]?.name || h.user).join(' y ')}
+            {others.some(h => h.typing) ? ' está escribiendo en esta sesión…' : ' también está viendo esta sesión'}
+          </p>
+        ) : null}
+      </header>
+
+      {prompt ? <PromptCard key={prompt.fingerprint} prompt={prompt} onAnswer={answer} busy={busy} /> : null}
+
+      <div class="tabs" role="tablist">
+        <button role="tab" class={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>Conversación</button>
+        <button role="tab" class={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')}>Terminal en vivo</button>
+      </div>
+      {tab === 'chat'
+        ? (sess.error && !sess.data
+            ? <p class="err pad">No se pudo leer la conversación: {sess.error.message}</p>
+            : <Chat ctx={ctx} msgs={msgs} queued={sess.data?.queued || []} older={before != null} onOlder={loadOlder} />)
+        : <Terminal pane={pane.data?.pane ?? null} />}
+
+      <form class="composer" onSubmit={(e) => { e.preventDefault(); sendDraft(); }}>
+        <textarea rows={2} value={draft} placeholder={prompt ? 'Tiene un pedido pendiente arriba; lo que escribas queda en cola hasta responderlo.' : `Escríbele a ${name}…  (Enter envía, Shift+Enter salto de línea)`}
+                  onInput={(e) => { setDraft(e.currentTarget.value); typing.current = !!e.currentTarget.value; }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDraft(); } }} />
+        <Btn kind="primary" type="submit" disabled={busy || !draft.trim()}>Enviar</Btn>
+      </form>
+
+      {confirm ? <Confirm {...confirm} onClose={() => setConfirm(null)} /> : null}
+      {rename != null ? (
+        <Modal title="Renombrar sesión" onClose={() => setRename(null)}>
+          <form class="stack modal-body" onSubmit={async (e) => {
+            e.preventDefault();
+            const r = await act('fleet_rename', { new_name: rename.trim() }, { confirm: true });
+            if (r) { setRename(null); ctx.go(`/p/${encodeURIComponent(project)}/s/${encodeURIComponent(rename.trim())}`); }
+          }}>
+            <label class="field"><span>Nombre nuevo</span><input value={rename} onInput={(e) => setRename(e.currentTarget.value)} autoFocus /></label>
+            <footer><Btn onClick={() => setRename(null)}>Cancelar</Btn><Btn kind="primary" type="submit" disabled={!rename.trim() || rename.trim() === name}>Renombrar</Btn></footer>
+          </form>
+        </Modal>
+      ) : null}
+    </section>
+  );
+}

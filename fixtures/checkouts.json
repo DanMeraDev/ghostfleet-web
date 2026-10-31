@@ -1,0 +1,13 @@
+{
+  "roots": [
+    "/Users/you/gf-demo",
+    "/Users/you"
+  ],
+  "checkouts": [
+    "/Users/you/gf-demo/acme-api",
+    "/Users/you/gf-demo/acme-api-1",
+    "/Users/you/gf-demo/acme-api-2",
+    "/Users/you/gf-demo/api-fix",
+    "/Users/you/gf-demo/docs-pass"
+  ]
+}

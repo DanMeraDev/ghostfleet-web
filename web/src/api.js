@@ -1,0 +1,37 @@
+// The only file that talks to the network.
+async function call(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'X-GFW': '1', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin',
+  });
+  let j = null;
+  try { j = await res.json(); } catch {}
+  if (!res.ok || (j && j.ok === false)) {
+    const e = new Error((j && j.text) || `error ${res.status}`);
+    e.status = res.status; e.body = j;
+    throw e;
+  }
+  return j;
+}
+const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v != null && v !== '')).toString();
+
+export const api = {
+  health: () => call('GET', '/api/health'),
+  setup: (users) => call('POST', '/api/setup', { users }),
+  login: (name, password) => call('POST', '/api/login', { name, password }),
+  logout: () => call('POST', '/api/logout'),
+  users: () => call('GET', '/api/users'),
+  addUser: (name, password) => call('POST', '/api/users', { name, password }),
+  password: (old, nw) => call('POST', '/api/password', { old, new: nw }),
+  projects: () => call('GET', '/api/projects'),
+  grid: (project) => call('GET', `/api/grid?${qs({ project })}`),
+  session: (project, session, before) => call('GET', `/api/session?${qs({ project, session, before })}`),
+  pane: (project, session) => call('GET', `/api/pane?${qs({ project, session })}`),
+  presence: (project, session, typing) => call('POST', '/api/presence', { project, session, typing }),
+  assign: (project, session, owner) => call('POST', '/api/assign', { project, session, owner }),
+  activity: () => call('GET', '/api/activity'),
+  act: (tool, args, { confirm = false, owner } = {}) => call('POST', '/api/act', { tool, args, confirm, owner }),
+  resetDemo: () => call('POST', '/api/demo/reset'),
+};
