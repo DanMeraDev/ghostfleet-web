@@ -61,6 +61,9 @@ navegador. Se detectan solos:
 | whisper.cpp (oír) | `~/.local/share/whisper/whisper-cli` + un `ggml-*.bin` | compilar [whisper.cpp](https://github.com/ggml-org/whisper.cpp) y bajar `ggml-small.bin` (multilingüe) |
 | Kokoro (hablar) | `~/.local/share/kokoro` | `fleet-jarvis voice --kokoro --install`, o `lib/kokoro-setup.mjs` de ghostfleet |
 
+Las dos cosas de una vez, en el home y sin `sudo` (necesita git, cmake, un compilador de C++ y `uv`):
+`bash scripts/install-voice.sh`.
+
 El idioma de whisper es español (`GFW_VOICE_LANG` para cambiarlo). Grabar se corta solo tras 1,2 s
 de silencio.
 
