@@ -73,7 +73,7 @@ export async function projects() {
 
 const gridRun = cached(1500, (t) => new Promise((resolve, reject) => {
   execFile(process.execPath, [GRID, t.sock, TMUX_CONF, '--json'],
-    { encoding: 'utf8', env: gridEnv(t), timeout: 20000, maxBuffer: 64 * 1024 * 1024 },
+    { encoding: 'utf8', env: gridEnv(t), cwd: t.path, timeout: 20000, maxBuffer: 64 * 1024 * 1024 },
     (err, stdout, stderr) => {
       if (err && !stdout) return reject(new Error(`fleet-grid --json falló: ${(stderr || err.message).trim().split('\n')[0]}`));
       try {
@@ -85,6 +85,31 @@ const gridRun = cached(1500, (t) => new Promise((resolve, reject) => {
 }));
 
 export const grid = (project) => { const t = target(project); return gridRun(t.name, t); };
+let fresh = 0;
+const gridNow = (t) => gridRun(`${t.name}#${++fresh}`, t);
+
+// The lead has to be there before it can be talked to. Whatever state it is in, this gets it
+// to "running" the way the fleet itself would: start it (fleet-project add --start, which
+// only boots a master that is not already up), reopen it after a reboot, wake it from
+// hibernation, un-park it. Then wait until its card says it is up.
+export async function ensureLead(project) {
+  const t = target(project);
+  const lead = (g) => (g.cards || []).find(c => c.lead);
+  const m = lead(await gridNow(t));
+  let did = null, out = null;
+  if (!m) { did = 'start'; out = await act('fleet_project_add', { path: t.path, name: t.name, profile: t.profile, start: true }); }
+  else if (m.lost) { did = 'reopen'; out = await act('fleet_reopen', { project: t.name, session: m.name }); }
+  else if (m.asleep) { did = 'wake'; out = await act('fleet_wake', { project: t.name, session: m.name }); }
+  else if (m.status === 'parked') { did = 'resume'; out = await act('fleet_resume', { project: t.name, session: m.name }); }
+  if (!did) return { ok: true, started: null, lead: m.name };
+  if (out && !out.ok) return { ok: false, started: did, text: out.text };
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const n = lead(await gridNow(t));
+    if (n && !n.lost && !n.asleep && !['starting', 'unknown'].includes(n.status)) return { ok: true, started: did, lead: n.name };
+  }
+  return { ok: false, started: did, text: 'el líder no terminó de arrancar en un minuto; revisa la terminal del proyecto' };
+}
 
 export async function session(project, name, before) {
   const t = target(project);

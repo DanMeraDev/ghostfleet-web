@@ -81,6 +81,8 @@ function seed() {
       m('assistant', 'Quedó en pausa hasta que el cliente confirme los precios nuevos.', 1440),
     ], { folder: 'cotizador_DV', ts: ago(1440) }),
   ]);
+  add('agente-facturas', '/home/equipo/Proyectos/agente_facturas', [], [
+    { path: '/home/equipo/Proyectos/agente_facturas-ocr', branch: 'ocr-mejoras', task: '', removing: false }]);
   for (const p of Object.values(P)) for (const k of p.cards) if (!k.pane) k.pane = plainPane([k.msg]);
   return P;
 }
@@ -204,6 +206,21 @@ function leadAct(p, k, prompt) {
                         say(k, `Listo: ${name} terminó su primer pase. Revísalo cuando puedas.`); });
   });
   return { ok: true, text: `→ ${k.name}` };
+}
+
+export async function ensureLead(project) {
+  const { p } = find(project);
+  let m = p.cards.find(k => k.lead);
+  if (m && m.status !== 'parked') return { ok: true, started: null, lead: m.name };
+  if (!m) {
+    m = { name: 'master', status: 'starting', branch: 'main', folder: project, agent: 'claude', label: null, pr: null, msg: '', age: 0,
+          exited: false, asleep: false, lost: false, queued: 0, attached: false, sched: null, limit_at: null, lead: true, parent: null,
+          workers: null, sub_head: false, ts: now(), messages: [], prompt: null, pane: plainPane(['arrancando…']) };
+    p.cards.unshift(m);
+    await new Promise(r => setTimeout(r, 1800));
+  }
+  m.status = 'idle'; m.ts = now();
+  return { ok: true, started: 'start', lead: m.name };
 }
 
 const timers = new Map();

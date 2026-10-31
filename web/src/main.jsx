@@ -5,7 +5,8 @@ import { Setup, Login } from './auth.jsx';
 import { ProjectView } from './project.jsx';
 import { Home, Activity, Settings } from './views.jsx';
 import { Avatar, Logo, Toasts, usePoll, toast } from './ui.jsx';
-import { Assistant, Ship } from './assistant.jsx';
+import { Assistant, Ship, VoiceBar } from './assistant.jsx';
+import { bind, unbind } from './agent.js';
 import { FleetMap } from './map.jsx';
 import './styles.css';
 
@@ -75,8 +76,10 @@ function Shell({ me, mode, onLogout }) {
   const ctx = {
     me, mode, users, usersById,
     go: (to) => { location.hash = to; },
-    logout: async () => { try { await api.logout(); } catch {} onLogout(); },
+    logout: async () => { unbind(); try { await api.logout(); } catch {} onLogout(); },
   };
+  // The assistant lives above the pages; it needs to know where the person is.
+  bind({ go: ctx.go, me, projects: pj?.projects || [], route });
   const need = (pj?.projects || []).reduce((n, p) => n + p.counts.need_you, 0);
   useEffect(() => { document.title = need ? `(${need}) ghostfleet` : 'ghostfleet'; }, [need]);
 
@@ -102,7 +105,8 @@ function Shell({ me, mode, onLogout }) {
       </main>
       {asOpen
         ? <Assistant ctx={ctx} route={route} projects={pj?.projects ?? null} onClose={() => setAsOpen(false)} />
-        : <button class="as-launch" onClick={() => setAsOpen(true)} aria-label="Abrir el asistente de voz"><Ship size={34} /> <span>Asistente</span></button>}
+        : <><VoiceBar onOpen={() => setAsOpen(true)} />
+            <button class="as-launch" onClick={() => setAsOpen(true)} aria-label="Abrir el asistente de voz"><Ship size={34} /> <span>Asistente</span></button></>}
       <Toasts />
     </div>
   );

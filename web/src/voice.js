@@ -138,6 +138,7 @@ export async function speak(md, onEnd) {
   playing = job;
   try {
     const r = await api.speak(text);
+    if (job.cancelled) return;
     for (const s of r.sentences) {
       if (job.cancelled) return;
       await new Promise((resolve) => {

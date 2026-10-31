@@ -306,6 +306,12 @@ async function route(req, res, url) {
   if (p === '/api/activity') return send(res, 200, { rows: activity(Number(q(url, 'limit')) || 200) });
 
   if (p === '/api/voice') return send(res, 200, voice.status());
+  if (p === '/api/lead' && req.method === 'POST') {
+    const b = await body(req);
+    const r = await fleet.ensureLead(String(b.project || ''));
+    if (r.started) audit({ user: me.id, verb: `lead_${r.started}`, project: b.project, subject: 'master', result: r.ok ? 'ran' : 'refused', output: r.text || '' });
+    return send(res, r.ok ? 200 : 502, r);
+  }
   if (p === '/api/hear' && req.method === 'POST') {
     const wav = await rawBody(req, 8 * 1048576);
     let words = [];

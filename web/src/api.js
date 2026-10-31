@@ -35,5 +35,6 @@ export const api = {
   act: (tool, args, { confirm = false, owner } = {}) => call('POST', '/api/act', { tool, args, confirm, owner }),
   resetDemo: () => call('POST', '/api/demo/reset'),
   voice: () => call('GET', '/api/voice'),
+  lead: (project) => call('POST', '/api/lead', { project }),
   speak: (text) => call('POST', '/api/speak', { text }),
 };

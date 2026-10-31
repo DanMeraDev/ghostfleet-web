@@ -70,13 +70,29 @@ export function ProjectView({ ctx, project, session }) {
     },
   });
 
+  const lead = (g?.cards || []).find(c => c.lead);
+  const leadUp = lead && !lead.lost && !lead.asleep && statusOf(lead) !== 'parked';
+  const [waking, setWaking] = useState(false);
+  const wake = async () => {
+    setWaking(true);
+    try { const r = await api.lead(project); toast(r.started ? 'El líder ya está listo.' : 'El líder ya estaba abierto.', 'good'); reload(); }
+    catch (e) { toast(`No se pudo arrancar el líder: ${e.message}`, 'bad'); }
+    finally { setWaking(false); }
+  };
   const header = (
     <header class="page-head">
       <div>
         <h1>{project}</h1>
         <p class="muted">{g ? `${g.cards.length} sesiones · ${g.free_worktrees?.length || 0} worktrees libres` : 'Cargando…'}</p>
       </div>
-      <Btn kind="primary" icon="+" onClick={() => setSpawn({})}>Nueva sesión</Btn>
+      <div class="row wrap">
+        {g && !leadUp ? (
+          <Btn kind="ghost" disabled={waking} onClick={wake} title="El líder es el Claude del proyecto que reparte el trabajo">
+            {waking ? 'Arrancando…' : !lead ? '▶ Arrancar el líder' : lead.lost ? '↺ Reabrir el líder' : lead.asleep ? '☾ Despertar al líder' : '▶ Reanudar al líder'}
+          </Btn>
+        ) : null}
+        <Btn kind="primary" icon="+" onClick={() => setSpawn({})}>Nueva sesión</Btn>
+      </div>
     </header>
   );
   const filters = (
@@ -138,23 +154,57 @@ export function ProjectView({ ctx, project, session }) {
           </section>
         );
       })}
-      {g?.free_worktrees?.length ? (
+      {g && (g.cards.length || g.free_worktrees?.length) ? (
         <section class="group">
-          <h2>Worktrees libres <span class="count">{g.free_worktrees.length}</span><small>Carpetas sin sesión, listas para reutilizar</small></h2>
-          <div class="free-list">
-            {g.free_worktrees.map(w => (
-              <div class="free" key={w.path}>
-                <div><b>{w.path.split('/').pop()}</b><span class="muted"> ⎇ {w.branch}</span><div class="path">{w.path}</div></div>
-                <div class="row">
-                  <Btn kind="ghost sm" onClick={() => setSpawn({ reuse: w.path })}>Usar para una sesión</Btn>
-                  <Btn kind="ghost sm danger" onClick={() => removeWorktree(w)}>Borrar</Btn>
-                </div>
-              </div>
-            ))}
-          </div>
+          <h2>Árbol del proyecto <small>El líder en la carpeta principal y cada sesión en su propio worktree (sus “hijos”)</small></h2>
+          <Tree ctx={ctx} g={g} open={open} onReuse={(w) => setSpawn({ reuse: w.path })} onRemove={removeWorktree} />
         </section>
       ) : null}
       {modals}
+    </div>
+  );
+}
+
+// Who hangs from whom: the lead, the workers it (or a person) opened, the sub-workers a
+// worker opened in turn (card.parent), and the folders nobody is using.
+function Tree({ ctx, g, open, onReuse, onRemove }) {
+  const cards = g.cards || [];
+  const lead = cards.find(c => c.lead);
+  const kids = (name) => cards.filter(c => !c.lead && (c.parent || null) === name);
+  const top = cards.filter(c => !c.lead && (!c.parent || !cards.some(x => x.name === c.parent)));
+  const Row = ({ c, depth }) => {
+    const st = statusOf(c), meta = STATUS[st] || STATUS.unknown;
+    const owner = c.owner ? ctx.usersById[c.owner] : null;
+    return (
+      <>
+        <button class={`tree-row c-${meta.color}`} style={{ '--d': depth }} onClick={() => open(c.name)}>
+          <span class="tree-branch">{depth ? '└─' : ''}</span>
+          <b class="tree-glyph">{meta.glyph}</b>
+          <span class="tree-name">{c.lead ? 'líder' : c.name}{c.label ? <em> · {c.label}</em> : null}</span>
+          <span class="tree-meta">📁 {c.folder || '—'} · ⎇ {c.branch || '—'}</span>
+          <span class="tree-st">{meta.label}</span>
+          <Avatar user={owner} size={18} />
+        </button>
+        {kids(c.name).map(k => <Row key={k.name} c={k} depth={depth + 1} />)}
+      </>
+    );
+  };
+  return (
+    <div class="tree">
+      {lead ? <Row c={lead} depth={0} /> : <div class="tree-row static"><span class="muted">Sin líder abierto en la carpeta principal.</span></div>}
+      {top.map(c => <Row key={c.name} c={c} depth={1} />)}
+      {(g.free_worktrees || []).map(w => (
+        <div class="tree-row free-row" key={w.path} style={{ '--d': 1 }}>
+          <span class="tree-branch">└─</span>
+          <b class="tree-glyph">○</b>
+          <span class="tree-name">{w.path.split('/').pop()} <em class="muted">libre</em></span>
+          <span class="tree-meta">⎇ {w.branch} · {w.path}</span>
+          <span class="row">
+            <Btn kind="ghost sm" onClick={() => onReuse(w)}>Abrir una sesión aquí</Btn>
+            <Btn kind="ghost sm danger" onClick={() => onRemove(w)}>Borrar</Btn>
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

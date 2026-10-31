@@ -3,6 +3,7 @@ import { useState } from 'preact/hooks';
 const seenHelp = () => { try { return localStorage.getItem('gfw.help') === 'off'; } catch { return false; } };
 import { api } from './api.js';
 import { StatusPill, Avatar, Btn, usePoll, sinceTs, clock, toast } from './ui.jsx';
+import { HomeAgent } from './assistant.jsx';
 
 function Row({ ctx, p, s }) {
   const owner = s.owner ? ctx.usersById[s.owner] : null;
@@ -29,6 +30,7 @@ export function Home({ ctx, projects }) {
     <div class="page">
       <header class="page-head"><div><h1>{hello}, {ctx.me.name.split(' ')[0]}</h1>
         <p class="muted">Lo que está pasando en la flota ahora.</p></div></header>
+      <HomeAgent ctx={ctx} projects={projects} />
       <Help />
       <div class="stats">
         <div class={`stat${need.length ? ' hot' : ''}`}><b>{need.length}</b><span>te necesitan</span></div>
@@ -73,7 +75,7 @@ function Help() {
       <b>Cómo funciona</b>
       <ol>
         <li><b>Elige un proyecto</b> a la izquierda. Cada tarjeta es un Claude trabajando en su propia carpeta y rama, así no se pisan entre ustedes.</li>
-        <li><b>Abre una sesión</b> con el botón <i>+ Nueva sesión</i> y escribe qué tiene que hacer, o pídeselo al <b>asistente de voz</b> (abajo a la derecha) y él reparte el trabajo.</li>
+        <li><b>Pide lo que necesitas</b> en el cuadro de arriba, hablando o escribiendo: “vamos a practiq, arregla los tests de pagos”. Entiendo el proyecto y se lo paso a su líder, que reparte el trabajo. También puedes abrir una sesión a mano con <i>+ Nueva sesión</i>.</li>
         <li><b>Cuando una sesión te necesite</b> se pone en rojo: entra y responde con un clic. Las verdes ya terminaron y esperan tu revisión.</li>
       </ol>
     </div>
