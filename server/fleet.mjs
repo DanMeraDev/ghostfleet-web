@@ -8,11 +8,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-
-export const GF_HOME = process.env.GHOSTFLEET_HOME
-  || path.join(os.homedir(), '.local', 'libexec', 'ghostfleet');
+import { GF_HOME } from './paths.mjs';
 
 const need = (rel) => {
   const p = path.join(GF_HOME, rel);
@@ -145,6 +143,46 @@ export function act(tool, args) {
       : undefined;
     return { ok: !refused && !changed, text, changed, queued };
   });
+}
+
+// ── labels and schedules: the grid's own markers, written the way the grid writes them ──
+// fleet-grid.mjs owns these formats (setLabel / schedule / cancelSchedule) and no command
+// does yet, which is why fleet-serve refuses them. This mirrors those three functions
+// byte for byte; the right home is a ghostfleet command + MCP tool (see README).
+const fleetDir = (t) => path.join(t.cfg, 'fleet');
+const labelFile = (t, s) => path.join(fleetDir(t), `${t.sock}.${s}.label`);
+const schedFile = (t, s) => path.join(fleetDir(t), `${t.sock}.${s}.sched`);
+const readSched = (t, s) => { try { return JSON.parse(fs.readFileSync(schedFile(t, s), 'utf8')); } catch { return null; } };
+
+export function setLabel(project, session, text) {
+  const t = target(project);
+  const v = String(text || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  fs.mkdirSync(fleetDir(t), { recursive: true });
+  if (v) fs.writeFileSync(labelFile(t, session), v + '\n');
+  else { try { fs.unlinkSync(labelFile(t, session)); } catch {} }
+  return { ok: true, text: v ? `etiqueta: ${v}` : 'etiqueta quitada' };
+}
+
+export function cancelSchedule(project, session) {
+  const t = target(project);
+  const m = readSched(t, session);
+  if (m && m.pid) { try { process.kill(-m.pid, 'SIGTERM'); } catch {} try { process.kill(m.pid, 'SIGTERM'); } catch {} }
+  try { fs.unlinkSync(schedFile(t, session)); } catch {}
+  return { ok: true, text: m ? 'programación cancelada' : 'no había nada programado' };
+}
+
+export function schedule(project, session, at, msg) {
+  const t = target(project);
+  cancelSchedule(project, session);                       // replace, never stack
+  const bin = path.join(GF_HOME, 'bin', 'fleet-schedule');
+  const child = spawn(bin, [t.sock, session, String(at), msg], {
+    detached: true, stdio: 'ignore',
+    env: { ...process.env, TMUX: '', CLAUDE_CONFIG_DIR: t.cfg, CLAUDE_FLEET_DIR: fleetDir(t) },
+  });
+  child.unref();
+  fs.mkdirSync(fleetDir(t), { recursive: true });
+  fs.writeFileSync(schedFile(t, session), JSON.stringify({ at, msg, pid: child.pid }));
+  return { ok: true, text: `programado para ${new Date(at * 1000).toLocaleString('es')}` };
 }
 
 export const mode = 'real';

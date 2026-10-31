@@ -39,11 +39,42 @@ Para desarrollo con recarga en caliente: `pnpm dev:demo` o `pnpm dev`, y abre <h
 - **Responsable y presencia**: cada sesión tiene un dueño, y se ve cuando el otro está mirando o escribiendo.
 - **Actividad**: todo lo que se hizo, con nombre y hora.
 - **Asistente de voz**: le hablas al líder (`master`) del proyecto, o a Jarvis si está activado, y él
-  reparte el trabajo en sesiones. El barco navega a la sesión donde está trabajando y, si eliges
+  reparte el trabajo en sesiones. El barco navega a la sesión donde está trabajando y, con
   *Seguirlo en vivo*, la pantalla va con él. Responde en voz alta y tiene modo manos libres.
+  Además entiende órdenes para moverse, sin gastar Claude: “ve a vault-invers”, “abre la sesión
+  stripe”, “muéstrame el mapa”, “habla con el líder de cotizador” (tolera errores de transcripción).
+- **Mapa en vivo**: todos los proyectos como islas y sus sesiones como barcos del color de su estado;
+  el barco fantasma vuela a donde acaba de pasar algo, en cualquier proyecto, con un registro en vivo.
+- **Etiquetas y mensajes programados**: “🏷 urgente cliente”, o “escríbele *continúa* mañana a las 9”.
+  Cuando una sesión llega al límite de uso, un botón la deja programada para retomar sola al volver
+  el cupo. Se guardan en los mismos marcadores que la grilla de ghostfleet, así que también se ven
+  en la terminal.
 
-El dictado usa el reconocimiento de voz del navegador: funciona en **Chrome y Edge** (con internet,
-porque Chrome lo procesa en sus servidores). Brave y Firefox no lo traen; ahí se le escribe.
+## Voz
+
+**Local primero.** Si la máquina tiene whisper.cpp y Kokoro (los mismos que usa el Jarvis de
+ghostfleet), se transcribe y se habla aquí: el audio no sale de la máquina y funciona en cualquier
+navegador. Se detectan solos:
+
+| | dónde | cómo se instala |
+|---|---|---|
+| whisper.cpp (oír) | `~/.local/share/whisper/whisper-cli` + un `ggml-*.bin` | compilar [whisper.cpp](https://github.com/ggml-org/whisper.cpp) y bajar `ggml-small.bin` (multilingüe) |
+| Kokoro (hablar) | `~/.local/share/kokoro` | `fleet-jarvis voice --kokoro --install`, o `lib/kokoro-setup.mjs` de ghostfleet |
+
+El idioma de whisper es español (`GFW_VOICE_LANG` para cambiarlo). Grabar se corta solo tras 1,2 s
+de silencio.
+
+**Si no hay voz local**, se usa la del navegador: el dictado funciona en Chrome y Edge (con internet,
+porque Chrome lo procesa en sus servidores) y la lectura con `speechSynthesis`.
+
+## Para proponer a ghostfleet
+
+Las etiquetas y la programación las escribe hoy ghostfleet-web imitando a `fleet-grid.mjs`, que es su
+único dueño (por eso `fleet-serve` las rechaza). Lo correcto es un comando en ghostfleet que sea dueño
+de esos marcadores (`<sock>.<sesión>.label` y `.sched`) y herramientas MCP `fleet_label` /
+`fleet_schedule` encima; entonces este servidor las llama como a las demás. De paso: `bin/fleet-schedule`
+borra `<sesión>.sched` sin el socket delante, que no es el marcador que escribe la grilla (inofensivo,
+porque la grilla ignora horas pasadas, pero deja el archivo).
 
 ## Seguridad
 

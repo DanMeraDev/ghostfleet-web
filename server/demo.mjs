@@ -73,6 +73,10 @@ function seed() {
   ]);
 
   add('cotizador-dv', '/home/equipo/Proyectos/cotizador_DV', [
+    card('precios-2027', 'limit', 'precios-2027', [
+      m('user', 'Actualiza la tabla de precios 2027 y recalcula los márgenes.', 50),
+      m('assistant', 'Llegué al límite de uso de la cuenta a mitad de la tarea. Retomo cuando vuelva el cupo.', 6),
+    ], { ts: ago(6), more: { limit_at: now() + 2 * 3600, label: 'urgente cliente' } }),
     card('master', 'parked', 'main', [
       m('assistant', 'Quedó en pausa hasta que el cliente confirme los precios nuevos.', 1440),
     ], { folder: 'cotizador_DV', ts: ago(1440) }),
@@ -202,5 +206,26 @@ function leadAct(p, k, prompt) {
   return { ok: true, text: `→ ${k.name}` };
 }
 
-export const reset = () => { P = seed(); };
+const timers = new Map();
+export function setLabel(project, session, text) {
+  const { k } = find(project, session);
+  k.label = String(text || '').trim().slice(0, 40) || null;
+  return { ok: true, text: k.label ? `etiqueta: ${k.label}` : 'etiqueta quitada' };
+}
+export function cancelSchedule(project, session) {
+  const { k } = find(project, session);
+  clearTimeout(timers.get(`${project}/${session}`));
+  const had = !!k.sched; k.sched = null;
+  return { ok: true, text: had ? 'programación cancelada' : 'no había nada programado' };
+}
+export function schedule(project, session, at, msg) {
+  const { p, k } = find(project, session);
+  cancelSchedule(project, session);
+  k.sched = { at, msg };
+  const wait = Math.min(Math.max(0, at * 1000 - Date.now()), 2 ** 31 - 1);
+  timers.set(`${project}/${session}`, setTimeout(() => { k.sched = null; act('fleet_send', { project, session, prompt: msg }); }, wait));
+  return { ok: true, text: `programado para ${new Date(at * 1000).toLocaleString('es')}` };
+}
+
+export const reset = () => { for (const t of timers.values()) clearTimeout(t); timers.clear(); P = seed(); };
 export const mode = 'demo';

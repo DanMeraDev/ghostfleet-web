@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'preact/hooks';
 import { api } from './api.js';
-import { STATUS, statusOf, Btn, toast } from './ui.jsx';
+import { STATUS, statusOf, Btn } from './ui.jsx';
+import { voiceStatus, listenLocal, listenBrowser, browserCanHear, speak, stopSpeaking, plainText } from './voice.js';
 
 // ── the avatar: ghostfleet's own SHIP sprite (bin/fleet-grid.mjs), pixel for pixel ─────
 // Half-blocks carry two pixel rows per text row: ▀ the top one, ▄ the bottom, █ both.
@@ -22,74 +23,14 @@ const PIXELS = (() => {
   }));
   return px;
 })();
-export function Ship({ size = 64, state = 'idle' }) {
+export function Ship({ size = 64, state = 'idle', title }) {
   return (
-    <span class={`ship st-${state}`} style={{ width: size, height: size / 2 }}>
+    <span class={`ship st-${state}`} style={{ width: size, height: size / 2 }} title={title}>
       <svg viewBox="0 0 32 16" width={size} height={size / 2} shape-rendering="crispEdges" aria-hidden="true">
         {PIXELS.map(([x, y]) => <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" />)}
       </svg>
     </span>
   );
-}
-
-// ── voice in: the browser's own recogniser (Chrome, Edge, Safari) ──────────────────────
-const Recognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
-function useListener({ lang, onFinal }) {
-  const [listening, setListening] = useState(false);
-  const [interim, setInterim] = useState('');
-  const rec = useRef(null);
-  const final = useRef('');
-  const cb = useRef(onFinal); cb.current = onFinal;
-  const start = () => {
-    if (!Recognition || listening) return;
-    const r = new Recognition();
-    r.lang = lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
-    final.current = '';
-    r.onresult = (e) => {
-      let live = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) final.current += t; else live += t;
-      }
-      setInterim((final.current + ' ' + live).trim());
-    };
-    r.onerror = (e) => {
-      if (e.error === 'not-allowed') toast('El navegador no dio permiso al micrófono. Actívalo en el candado de la barra de direcciones.', 'bad');
-      else if (e.error === 'network') toast('El dictado del navegador necesita internet (Chrome lo procesa en sus servidores).', 'bad');
-      else if (e.error !== 'no-speech' && e.error !== 'aborted') toast(`Dictado: ${e.error}`, 'bad');
-    };
-    r.onend = () => {
-      setListening(false);
-      const t = final.current.trim();
-      setInterim('');
-      if (t) cb.current(t);
-    };
-    rec.current = r;
-    try { r.start(); setListening(true); } catch { setListening(false); }
-  };
-  const stop = () => { try { rec.current?.stop(); } catch {} };
-  useEffect(() => () => { try { rec.current?.abort(); } catch {} }, []);
-  return { supported: !!Recognition, listening, interim, start, stop };
-}
-
-// ── voice out: speechSynthesis, a Spanish voice when the machine has one ───────────────
-const plainText = (md) => String(md || '')
-  .replace(/```[\s\S]*?```/g, ' (código) ')
-  .replace(/`([^`]+)`/g, '$1')
-  .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-  .replace(/[*_#>|]/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim();
-function speak(text, onEnd) {
-  const s = window.speechSynthesis;
-  if (!s) { onEnd?.(); return; }
-  s.cancel();
-  const u = new SpeechSynthesisUtterance(plainText(text).slice(0, 900));
-  const v = s.getVoices().find(v => /^es(-|_)(419|MX|US|EC|CO|AR)/i.test(v.lang)) || s.getVoices().find(v => /^es/i.test(v.lang));
-  if (v) u.voice = v;
-  u.lang = v?.lang || 'es-ES'; u.rate = 1.05;
-  u.onend = () => onEnd?.(); u.onerror = () => onEnd?.();
-  s.speak(u);
 }
 
 const store = {
@@ -105,7 +46,60 @@ const frame = (me, text, voice) =>
   `y dime qué abriste.\n\n${text}`;
 const unframe = (t) => String(t || '').replace(/^(🎙|💬)[^\n]*\n\n/, '');
 
-const STATE_WORDS = { listening: 'Te escucho…', sending: 'Enviando…', thinking: 'Pensando…', acting: 'Trabajando', speaking: 'Hablando', idle: 'Listo', off: 'Sin líder' };
+// ── what the app does itself, without asking anybody: getting around ───────────────────
+const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+// Names are matched loosely on purpose: whisper hears "stripe-billing" as "stripe bilging".
+const grams = (s) => { const t = ` ${s} `; const g = new Map(); for (let i = 0; i < t.length - 1; i++) { const k = t.slice(i, i + 2); g.set(k, (g.get(k) || 0) + 1); } return g; };
+function dice(a, b) {
+  const A = grams(a), B = grams(b); let both = 0, n = 0;
+  for (const [k, v] of A) { n += v; both += Math.min(v, B.get(k) || 0); }
+  for (const v of B.values()) n += v;
+  return n ? (2 * both) / n : 0;
+}
+function best(name, options) {
+  const n = norm(name);
+  if (!n) return null;
+  let hit = null, score = 0;
+  for (const o of options) {
+    const k = norm(o);
+    const s = k === n ? 2 : (k.startsWith(n) || n.startsWith(k)) && Math.min(k.length, n.length) >= 3 ? 1.5 : dice(k, n);
+    if (s > score) { hit = o; score = s; }
+  }
+  return score >= 0.6 ? hit : null;
+}
+export function intentOf(text, projects, target) {
+  const t = norm(text);
+  if (t.split(' ').length > 9) return null;
+  if (/^(muestrame |abre |ve a |ir a |vamos a |llevame a )?(el )?mapa( en vivo)?$/.test(t)) return { go: '/mapa', say: 'Abro el mapa en vivo.' };
+  if (/^(ve |vamos |llevame |volver )?(al )?inicio$/.test(t)) return { go: '/', say: 'Vamos al inicio.' };
+  if (/^(muestrame |abre |ve a )?(la )?actividad$/.test(t)) return { go: '/actividad', say: 'Abro la actividad.' };
+  const names = (projects || []).map(p => p.name);
+  let m = /^(?:habla(?:me)? con|hablar con|cambia(?:te)? al?) (?:el )?lider (?:de|del) (?:proyecto )?(.+)$/.exec(t);
+  if (m) { const p = best(m[1], names); if (p) return { target: p, go: `/p/${encodeURIComponent(p)}`, say: `Ahora le hablas al líder de ${p}.` }; }
+  m = /^(?:abre|ve a|vamos a|llevame a|muestrame|ensename|cambia a|pasa a|anda a) (?:la )?sesion (.+)$/.exec(t);
+  if (m) {
+    // this project's sessions first, then everybody's
+    const here = (projects || []).find(p => p.name === target)?.sessions.map(s => s.name) || [];
+    let s = best(m[1], here), where = target;
+    if (!s) {
+      const all = (projects || []).flatMap(p => p.sessions.map(x => ({ p: p.name, s: x.name })));
+      const k = best(m[1], all.map(x => `${x.s}`));
+      const hit = k && all.find(x => x.s === k);
+      if (hit) { s = hit.s; where = hit.p; }
+    }
+    if (s && where) return { go: `/p/${encodeURIComponent(where)}/s/${encodeURIComponent(s)}`, say: `Abro ${s}${where !== target ? ` en ${where}` : ''}.` };
+    return { say: `No encontré una sesión parecida a “${m[1]}”.` };
+  }
+  m = /^(?:abre|ve a|vamos a|llevame a|muestrame|ensename|cambia a|pasa a|anda a) (?:el )?(?:proyecto )?(.+)$/.exec(t);
+  if (m) {
+    const p = best(m[1], names);
+    if (p) return { go: `/p/${encodeURIComponent(p)}`, target: (projects.find(x => x.name === p)?.sessions || []).some(s => s.lead) ? p : null, say: `Vamos a ${p}.` };
+  }
+  return null;
+}
+
+const STATE_WORDS = { listening: 'Te escucho…', hearing: 'Transcribiendo…', sending: 'Enviando…', thinking: 'Pensando…',
+                      acting: 'Trabajando', speaking: 'Hablando', idle: 'Listo', off: 'Sin líder' };
 
 export function Assistant({ ctx, route, projects, onClose }) {
   const leads = useMemo(() => (projects || []).filter(p => p.sessions.some(s => s.lead)).map(p => p.name), [projects]);
@@ -124,24 +118,71 @@ export function Assistant({ ctx, route, projects, onClose }) {
   useEffect(() => store.set('handsFree', handsFree), [handsFree]);
   useEffect(() => store.set('follow', follow), [follow]);
 
+  const [vs, setVs] = useState(null);
+  useEffect(() => { voiceStatus(true).then(setVs); }, []);
+  const local = !!vs?.hear?.ready;
+  const canHear = local || browserCanHear;
+
   const [feed, setFeed] = useState([]);
   const [typed, setTyped] = useState('');
-  const [phase, setPhase] = useState('idle');     // sending | speaking | idle (listening comes from the hook)
+  const [phase, setPhase] = useState('idle');   // listening | hearing | sending | speaking | idle
+  const [level, setLevel] = useState(0);
+  const [interim, setInterim] = useState('');
   const [cards, setCards] = useState([]);
   const [focus, setFocus] = useState('master');
   const sentAt = useRef(0);
   const seenAi = useRef(0);
   const prev = useRef(null);
   const lastGo = useRef(0);
-  const push = (e) => setFeed(f => [...f.slice(-40), { id: Math.random(), at: Date.now(), ...e }]);
+  const mic = useRef(null);
+  const live = useRef({});
+  live.current = { handsFree, voiceOut, follow, target, projects };
+  const push = (e) => setFeed(f => [...f.slice(-50), { id: Math.random(), at: Date.now(), ...e }]);
 
-  const listener = useListener({ lang: 'es-ES', onFinal: (t) => send(t, true) });
+  const say = (text, then) => {
+    if (!live.current.voiceOut) { then?.(); return; }
+    setPhase('speaking');
+    speak(text, () => { setPhase('idle'); then?.(); });
+  };
+  const rearm = () => { if (live.current.handsFree) setTimeout(() => startListening(), 400); };
+
+  function startListening() {
+    if (mic.current) return;
+    stopSpeaking();
+    setInterim(''); setLevel(0);
+    const common = {
+      onState: (s) => setPhase(s),
+      onError: (m) => push({ kind: 'event', text: m, bad: true }),
+      onText: (t) => { mic.current = null; setLevel(0); setInterim(''); setPhase('idle'); if (t) heard(t, true); else if (live.current.handsFree) rearm(); },
+    };
+    mic.current = local
+      ? listenLocal({ ...common, onLevel: setLevel })
+      : listenBrowser({ ...common, onInterim: setInterim });
+  }
+  const stopListening = () => mic.current?.stop();
+
+  function heard(text, voice) {
+    const it = intentOf(text, live.current.projects, live.current.target);
+    if (it) {
+      push({ kind: 'me', text, voice });
+      if (it.target) setTarget(it.target);
+      if (it.go) {
+        ctx.go(it.go);
+        const m = /^\/p\/([^/]+)\/s\/(.+)$/.exec(it.go);
+        if (m && decodeURIComponent(m[1]) === live.current.target) setFocus(decodeURIComponent(m[2]));
+      }
+      push({ kind: 'event', text: it.say });
+      say(it.say, rearm);
+      return;
+    }
+    send(text, voice);
+  }
 
   // The fleet, watched: every new session and every change of status is an event the ship
   // sails to — and, when following, the page goes there too.
   useEffect(() => {
     if (!target) return undefined;
-    prev.current = null; setCards([]); setFeed([]); seenAi.current = Math.floor(Date.now() / 1000);
+    prev.current = null; setCards([]); seenAi.current = Math.floor(Date.now() / 1000);
     let alive = true;
     const tick = async () => {
       let g;
@@ -158,12 +199,12 @@ export function Assistant({ ctx, route, projects, onClose }) {
         const word = (STATUS[now] || STATUS.unknown).label.toLowerCase();
         const text = was == null ? `Abrió la sesión ${c.name}` : c.lead ? `El líder está ${word}` : `${c.name}: ${word}`;
         push({ kind: 'event', text, session: c.name, status: now });
+        setFocus(c.name);
         // A session the lead opened because of what this person asked is that person's.
         if (was == null && !c.lead && !c.owner && sentAt.current && Date.now() / 1000 - sentAt.current < 900)
           api.assign(target, c.name, ctx.me.id).catch(() => {});
-        setFocus(c.name);
         const worth = was == null || now === 'need-you' || (now === 'working' && !c.lead);
-        if (follow && worth && !c.lead && Date.now() - lastGo.current > 3000) {
+        if (live.current.follow && worth && !c.lead && Date.now() - lastGo.current > 3000) {
           lastGo.current = Date.now();
           ctx.go(`/p/${encodeURIComponent(target)}/s/${encodeURIComponent(c.name)}`);
         }
@@ -172,7 +213,7 @@ export function Assistant({ ctx, route, projects, onClose }) {
     tick();
     const t = setInterval(() => { if (!document.hidden) tick(); }, 2500);
     return () => { alive = false; clearInterval(t); };
-  }, [target, follow]);
+  }, [target]);
 
   // The lead's replies: anything it says after an instruction from here is shown, and read.
   useEffect(() => {
@@ -187,20 +228,18 @@ export function Assistant({ ctx, route, projects, onClose }) {
       if (!fresh.length) return;
       seenAi.current = Math.max(...fresh.map(m => m.ts));
       for (const m of fresh) push({ kind: 'ai', text: m.text });
-      const last = fresh[fresh.length - 1].text;
-      if (voiceOut) {
-        setPhase('speaking');
-        speak(last, () => { setPhase('idle'); if (handsFree) setTimeout(() => listener.start(), 350); });
-      } else if (handsFree) setTimeout(() => listener.start(), 350);
+      if (!mic.current) say(fresh[fresh.length - 1].text, rearm);
     };
     const t = setInterval(() => { if (!document.hidden) tick(); }, 2500);
     return () => { alive = false; clearInterval(t); };
-  }, [target, voiceOut, handsFree]);
+  }, [target]);
+
+  useEffect(() => () => { mic.current?.cancel(); stopSpeaking(); }, []);
 
   async function send(text, voice) {
     const t = String(text || '').trim();
     if (!t || !target) return;
-    window.speechSynthesis?.cancel();
+    stopSpeaking();
     push({ kind: 'me', text: t, voice });
     setPhase('sending'); setFocus('master');
     try {
@@ -209,17 +248,18 @@ export function Assistant({ ctx, route, projects, onClose }) {
       if (r.queued) push({ kind: 'event', text: r.queued === 'question' ? 'Quedó en cola: el líder tiene una pregunta pendiente.' : 'Quedó en cola: el líder termina su turno y lo toma.' });
     } catch (e) { push({ kind: 'event', text: `No llegó: ${e.message}`, bad: true }); }
     setPhase('idle');
+    if (live.current.handsFree) rearm();
   }
 
   const master = cards.find(c => c.lead);
   const mst = master ? statusOf(master) : null;
-  const state = listener.listening ? 'listening'
-    : phase === 'sending' ? 'sending' : phase === 'speaking' ? 'speaking'
+  const state = ['listening', 'hearing', 'sending', 'speaking'].includes(phase) ? phase
     : !master ? 'off' : mst === 'working' ? (focus !== 'master' ? 'acting' : 'thinking') : mst === 'need-you' ? 'thinking' : 'idle';
   const lane = [...cards].sort((a, b) => Number(b.lead) - Number(a.lead));
   const at = Math.max(0, lane.findIndex(c => c.name === focus));
   const feedRef = useRef(null);
-  useEffect(() => { const n = feedRef.current; if (n) n.scrollTop = n.scrollHeight; }, [feed.length]);
+  useEffect(() => { const n = feedRef.current; if (n) n.scrollTop = n.scrollHeight; }, [feed.length, interim]);
+  const listening = phase === 'listening' || phase === 'hearing';
 
   return (
     <aside class="assistant" aria-label="Asistente">
@@ -245,7 +285,7 @@ export function Assistant({ ctx, route, projects, onClose }) {
             const s = statusOf(c);
             return (
               <button key={c.name} class={`buoy c-${(STATUS[s] || STATUS.unknown).color}${c.name === focus ? ' on' : ''}`}
-                      title={`${c.name} · ${(STATUS[s] || STATUS.unknown).label}`}
+                      title={`${c.label || c.name} · ${(STATUS[s] || STATUS.unknown).label}`}
                       onClick={() => { setFocus(c.name); ctx.go(`/p/${encodeURIComponent(target)}/s/${encodeURIComponent(c.name)}`); }}>
                 <b>{(STATUS[s] || STATUS.unknown).glyph}</b><span>{c.lead ? 'líder' : c.name}</span>
               </button>
@@ -258,8 +298,8 @@ export function Assistant({ ctx, route, projects, onClose }) {
         {!feed.length ? (
           <div class="as-hint">
             <p><b>Dile qué necesitas, como a un compañero.</b></p>
-            <p class="muted">Por ejemplo: “Revisa los tests de pagos y arregla los que fallen” o “Abre una sesión para el login con Google y otra para el PDF de cotización”.</p>
-            <p class="muted">El líder decide, abre las sesiones que hagan falta y te va contando. El barco va a donde está trabajando.</p>
+            <p class="muted">“Revisa los tests de pagos y arregla los que fallen” · “Abre una sesión para el login con Google”.</p>
+            <p class="muted">También te muevo yo: “ve a vault-invers”, “abre la sesión stripe”, “muéstrame el mapa”, “habla con el líder de cotizador”.</p>
           </div>
         ) : null}
         {feed.map(e => (
@@ -270,24 +310,31 @@ export function Assistant({ ctx, route, projects, onClose }) {
               : <><span class="tag-ev">en vivo</span> {e.text}</>}
           </div>
         ))}
-        {listener.interim ? <div class="as-row me live"><span class="tag-me">🎙</span> {listener.interim}…</div> : null}
+        {interim ? <div class="as-row me live"><span class="tag-me">🎙</span> {interim}…</div> : null}
       </div>
 
       <div class="as-controls">
-        <button class={`mic${listener.listening ? ' on' : ''}`} disabled={!listener.supported || !target}
-                onClick={() => (listener.listening ? listener.stop() : listener.start())}
-                aria-label={listener.listening ? 'Dejar de escuchar' : 'Hablar'}>
-          <span class="mic-ico">{listener.listening ? '■' : '🎙'}</span>
-          <span>{listener.listening ? 'Escuchando… (clic para terminar)' : 'Hablar'}</span>
+        <button class={`mic${listening ? ' on' : ''}`} disabled={!canHear || !target || phase === 'hearing'}
+                onClick={() => (mic.current ? stopListening() : startListening())}
+                aria-label={listening ? 'Terminar' : 'Hablar'}>
+          <span class="mic-ico">{phase === 'hearing' ? '…' : listening ? '■' : '🎙'}</span>
+          <span>{phase === 'hearing' ? 'Transcribiendo…' : listening ? 'Te escucho · termina solo cuando dejas de hablar' : 'Hablar'}</span>
+          {phase === 'listening' && local ? <span class="meter"><i style={{ width: `${Math.round(level * 100)}%` }} /></span> : null}
         </button>
-        {!listener.supported ? <p class="muted small">Este navegador no permite dictado. Usa Chrome o Edge, o escríbele abajo.</p> : null}
-        <form class="row" onSubmit={(e) => { e.preventDefault(); send(typed, false); setTyped(''); }}>
+        <p class="voice-src muted small">
+          {vs == null ? 'Revisando la voz…'
+            : local ? '🔒 Voz local: se transcribe en esta máquina con whisper, el audio no sale de aquí.'
+            : browserCanHear ? 'Voz del navegador (Chrome la procesa en sus servidores).'
+            : 'Este navegador no trae dictado y no hay voz local instalada: escríbele abajo.'}
+          {vs?.speak?.ready ? ' Responde con la voz de Kokoro.' : ''}
+        </p>
+        <form class="row" onSubmit={(e) => { e.preventDefault(); const t = typed; setTyped(''); const it = intentOf(t, projects, target); if (it) heard(t, false); else send(t, false); }}>
           <input class="grow" value={typed} onInput={(e) => setTyped(e.currentTarget.value)} placeholder="…o escríbele aquí" disabled={!target} />
           <Btn kind="primary" type="submit" disabled={!typed.trim() || !target}>Enviar</Btn>
         </form>
         <div class="toggles">
-          <label><input type="checkbox" checked={voiceOut} onChange={(e) => setVoiceOut(e.currentTarget.checked)} /> Responder en voz alta</label>
-          <label><input type="checkbox" checked={handsFree} onChange={(e) => setHandsFree(e.currentTarget.checked)} /> Manos libres (vuelve a escuchar)</label>
+          <label><input type="checkbox" checked={voiceOut} onChange={(e) => { setVoiceOut(e.currentTarget.checked); if (!e.currentTarget.checked) stopSpeaking(); }} /> Responder en voz alta</label>
+          <label><input type="checkbox" checked={handsFree} onChange={(e) => setHandsFree(e.currentTarget.checked)} /> Manos libres (vuelve a escuchar solo)</label>
           <label><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.currentTarget.checked)} /> Seguirlo en vivo por las sesiones</label>
         </div>
       </div>

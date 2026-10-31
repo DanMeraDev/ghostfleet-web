@@ -36,6 +36,7 @@ if (!bindable(BIND)) {
 }
 
 const fleet = MODE === 'demo' ? await import('./demo.mjs') : await import('./fleet.mjs');
+const voice = await import('./voice.mjs');
 
 // ── small persistence helpers ───────────────────────────────────────────────────────────
 const now = () => Math.floor(Date.now() / 1000);
@@ -136,6 +137,10 @@ const TOOLS = {
   fleet_rename:          { fields: ['project', 'session', 'new_name'], confirm: true },
   fleet_stop:            { fields: ['project', 'session', 'reclaim', 'force'], confirm: true },
   fleet_worktree_remove: { fields: ['project', 'path', 'force'], confirm: true },
+  // ghostfleet-web's own, until ghostfleet has a command that owns these markers.
+  gfw_label:             { fields: ['project', 'session', 'text'], local: true },
+  gfw_schedule:          { fields: ['project', 'session', 'at', 'msg'], local: true },
+  gfw_unschedule:        { fields: ['project', 'session'], local: true },
 };
 const BOOLS = new Set(['anyway', 'no_enter', 'force_new', 'reclaim', 'force']);
 function buildArgs(tool, raw) {
@@ -149,6 +154,7 @@ function buildArgs(tool, raw) {
     out[k] = BOOLS.has(k) ? val === true : String(val);
   }
   if (!out.project) throw httpErr(400, 'falta el proyecto');
+  if (v.local && !out.session) throw httpErr(400, 'falta la sesión');
   return { args: out, v };
 }
 
@@ -163,6 +169,19 @@ async function body(req) {
   for await (const c of req) { n += c.length; if (n > 256 * 1024) throw httpErr(413, 'body demasiado grande'); chunks.push(c); }
   if (!n) return {};
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw httpErr(400, 'body no es JSON'); }
+}
+async function rawBody(req, cap) {
+  let n = 0; const chunks = [];
+  for await (const c of req) { n += c.length; if (n > cap) throw httpErr(413, `el audio pasa el límite de ${Math.round(cap / 1048576)} MB`); chunks.push(c); }
+  return Buffer.concat(chunks);
+}
+async function localAct(tool, a) {
+  if (tool === 'gfw_label') return fleet.setLabel(a.project, a.session, a.text || '');
+  if (tool === 'gfw_unschedule') return fleet.cancelSchedule(a.project, a.session);
+  const at = Number(a.at);
+  if (!Number.isInteger(at) || at < now() + 20 || at > now() + 14 * 86400) throw httpErr(400, 'la hora tiene que ser en el futuro y dentro de 14 días');
+  const msg = String(a.msg || 'continúa').trim().slice(0, 4000) || 'continúa';
+  return fleet.schedule(a.project, a.session, at, msg);
 }
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png',
                 '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' };
@@ -286,6 +305,29 @@ async function route(req, res, url) {
   }
   if (p === '/api/activity') return send(res, 200, { rows: activity(Number(q(url, 'limit')) || 200) });
 
+  if (p === '/api/voice') return send(res, 200, voice.status());
+  if (p === '/api/hear' && req.method === 'POST') {
+    const wav = await rawBody(req, 8 * 1048576);
+    let words = [];
+    try { words = (await fleet.projects()).flatMap(pr => [pr.name, ...pr.sessions.map(x => x.name)]); } catch {}
+    const t0 = Date.now();
+    const r = await voice.hear(wav, [...new Set(words)]);
+    console.log(new Date().toISOString().slice(11, 19), `hear: ${Math.round(wav.length / 1024)} KB en ${Date.now() - t0} ms`);
+    if (r.error) return send(res, 502, { ok: false, text: r.error });
+    return send(res, 200, { ok: true, text: r.text, ms: Date.now() - t0 });
+  }
+  if (p === '/api/speak' && req.method === 'POST') {
+    const b = await body(req);
+    const r = voice.plan(b.text, b.more === true);
+    return r.error ? send(res, 503, { ok: false, text: r.error }) : send(res, 200, { ok: true, ...r });
+  }
+  if (p.startsWith('/api/speak/') && req.method === 'GET') {
+    const r = await voice.audio(p.slice('/api/speak/'.length));
+    if (r.error) return send(res, r.status || 500, { ok: false, text: r.error });
+    res.writeHead(200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'private, max-age=3600', 'Content-Length': r.wav.length });
+    return res.end(r.wav);
+  }
+
   if (p === '/api/act' && req.method === 'POST') {
     const b = await body(req);
     const tool = String(b.tool || '');
@@ -295,7 +337,7 @@ async function route(req, res, url) {
     // "1" + Enter landing after the prompt is gone becomes a MESSAGE in the composer.
     if (tool === 'fleet_answer' && !args.expect)
       return send(res, 409, { ok: false, changed: true, text: 'el pedido ya no está en pantalla; nada se envió.' });
-    const r = await fleet.act(tool, args);
+    const r = v.local ? await localAct(tool, args) : await fleet.act(tool, args);
     const subject = args.session || args.name || args.path || '-';
     if (r.ok && tool === 'fleet_spawn') { state.owners[key(args.project, args.name)] = String(b.owner || me.id); saveState(); }
     if (r.ok && tool === 'fleet_rename') {

@@ -23,10 +23,12 @@ export function Card({ c, ctx, active, compact, onOpen }) {
         <span class="age">{c.age != null ? ago(c.age) : ''}</span>
       </div>
       <h3>{c.name}{c.lead ? <span class="tag">líder</span> : null}</h3>
+      {c.label ? <span class="card-label">🏷 {c.label}</span> : null}
       <div class="card-meta">
         <span class="branch" title="Rama">⎇ {c.branch || '—'}</span>
         {c.pr ? <span class="tag pr">PR {c.pr}</span> : null}
         {c.queued ? <span class="tag">{c.queued} en cola</span> : null}
+        {c.sched ? <span class="tag sched" title={c.sched.msg || ''}>⏰ {new Date(c.sched.at * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}</span> : null}
       </div>
       {!compact && c.msg ? <p class="card-msg">{c.msg}</p> : null}
       <div class="card-foot">

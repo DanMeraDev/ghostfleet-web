@@ -6,6 +6,7 @@ import { ProjectView } from './project.jsx';
 import { Home, Activity, Settings } from './views.jsx';
 import { Avatar, Logo, Toasts, usePoll, toast } from './ui.jsx';
 import { Assistant, Ship } from './assistant.jsx';
+import { FleetMap } from './map.jsx';
 import './styles.css';
 
 // Hash routes, so the back button works and a link pasted to a teammate opens the same view.
@@ -13,6 +14,7 @@ function parse(hash) {
   const parts = hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (parts[0] === 'p' && parts[1]) return { view: 'project', project: parts[1], session: parts[2] === 's' ? parts[3] : null };
   if (parts[0] === 'actividad') return { view: 'activity' };
+  if (parts[0] === 'mapa') return { view: 'map' };
   if (parts[0] === 'ajustes') return { view: 'settings' };
   return { view: 'home' };
 }
@@ -33,6 +35,7 @@ function Sidebar({ ctx, route, projects, open, onClose, onAssistant }) {
     <nav class={`side${open ? ' open' : ''}`} aria-label="Navegación">
       <div class="brand"><Logo /><div><b>ghostfleet</b><small>{ctx.mode === 'demo' ? 'modo demo' : 'tu flota'}</small></div></div>
       {link('/', route.view === 'home', <><span class="ico">⌂</span> Inicio {need ? <span class="badge bad">{need}</span> : null}</>)}
+      {link('/mapa', route.view === 'map', <><span class="ico">⛵</span> Mapa en vivo</>)}
       {link('/actividad', route.view === 'activity', <><span class="ico">≡</span> Actividad</>)}
       <button class="nav as-nav" onClick={() => { onClose(); onAssistant(); }}><span class="ico">🎙</span> Asistente de voz</button>
       <div class="side-sec">
@@ -67,7 +70,7 @@ function Shell({ me, mode, onLogout }) {
   useEffect(() => { try { localStorage.setItem('gfw.asOpen', asOpen ? '1' : '0'); } catch {} }, [asOpen]);
   const loadUsers = useCallback(() => api.users().then(r => setUsers(r.users)).catch(() => {}), []);
   useEffect(() => { loadUsers(); }, []);
-  const { data: pj } = usePoll(() => api.projects(), 6000, []);
+  const { data: pj } = usePoll(() => api.projects(), 4000, []);
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users]);
   const ctx = {
     me, mode, users, usersById,
@@ -80,6 +83,7 @@ function Shell({ me, mode, onLogout }) {
   let main;
   if (route.view === 'project') main = <ProjectView key={route.project} ctx={ctx} project={route.project} session={route.session} />;
   else if (route.view === 'activity') main = <Activity ctx={ctx} />;
+  else if (route.view === 'map') main = <FleetMap ctx={ctx} projects={pj?.projects ?? null} />;
   else if (route.view === 'settings') main = <Settings ctx={ctx} onUsers={loadUsers} />;
   else main = <Home ctx={ctx} projects={pj?.projects ?? null} />;
 

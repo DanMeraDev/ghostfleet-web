@@ -392,3 +392,63 @@ textarea { resize: vertical; }
 .help b { color: var(--white); }
 .help ol { margin: .5em 0 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: .35em; color: var(--fg); }
 .help .x { position: absolute; top: 10px; right: 12px; background: none; border: 0; color: var(--dim); cursor: pointer; }
+
+/* ── phase 2: voice meter, labels, schedules ─────────── */
+.mic { position: relative; overflow: hidden; }
+.meter { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.25); }
+.meter i { display: block; height: 100%; background: #fff; transition: width .08s linear; }
+.voice-src { margin: -4px 0 0; }
+.card-label { font-size: 12px; color: var(--yellow); margin-top: -2px; }
+.tag.sched { color: var(--cyan); border-color: rgba(95,215,215,.4); margin-left: 0; }
+.chip-label { background: rgba(255,215,95,.08); border: 1px solid rgba(255,215,95,.35); color: var(--yellow); border-radius: 999px; padding: .1em .7em; font-size: 12.5px; cursor: pointer; }
+.chip-sched { display: inline-flex; align-items: center; gap: .4em; background: rgba(95,215,215,.08); border: 1px solid rgba(95,215,215,.35); color: var(--cyan); border-radius: 999px; padding: .1em .3em .1em .7em; font-size: 12.5px; }
+.chip-sched button { background: none; border: 0; color: var(--dim); cursor: pointer; padding: 0 .3em; }
+.chip-sched button:hover { color: var(--red); }
+.ask.limit { border-color: rgba(255,215,95,.45); background: linear-gradient(180deg, rgba(255,215,95,.07), rgba(255,215,95,.02)); }
+.ask.limit .ask-head b { color: var(--yellow); }
+.ask p { margin: 0; }
+.quick { display: flex; flex-wrap: wrap; gap: 8px; }
+.toggle-inline { display: flex; gap: .5em; align-items: center; color: var(--dim); font-size: 13px; cursor: pointer; }
+.toggle-inline input { width: auto; accent-color: var(--cyan); }
+
+/* ── the live map ────────────────────────────────────── */
+.map-page { max-width: none; }
+.map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
+.ocean { position: relative; min-height: 420px; border: 1px solid var(--hair); border-radius: 16px; padding: 84px 22px 22px;
+  display: flex; flex-wrap: wrap; gap: 78px 18px; align-content: flex-start;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(95,215,215,.06), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(95,135,255,.05), transparent 45%),
+    repeating-linear-gradient(0deg, transparent 0 26px, rgba(95,215,215,.035) 26px 27px),
+    #090d12; }
+.island { position: relative; background: linear-gradient(180deg, #121a20, #0f151b); border: 1px solid #1f2a33; border-radius: 22px 26px 20px 28px;
+  padding: 12px 14px 12px; min-width: 200px; max-width: 100%; box-shadow: 0 0 0 6px rgba(95,215,215,.025); transition: box-shadow .4s, border-color .4s; }
+.island.focus { border-color: rgba(95,215,215,.5); box-shadow: 0 0 0 6px rgba(95,215,215,.07), 0 0 30px rgba(95,215,215,.08); }
+.island.hot { border-color: rgba(255,95,95,.5); }
+.island-name { background: none; border: 0; color: var(--white); font-family: var(--mono); font-weight: 600; font-size: 13.5px; cursor: pointer; padding: 0 0 8px; display: flex; gap: .5em; align-items: center; }
+.island-name:hover { color: var(--cyan); }
+.boats { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.boat { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: 0; cursor: pointer; padding: 2px 4px; border-radius: 8px; color: var(--c); }
+.boat:hover { background: rgba(255,255,255,.04); }
+.boat .ship { color: var(--c); }
+.boat-name { font-size: 10.5px; color: var(--dim); max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boat-owner { position: absolute; top: 0; right: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.boat.st-need-you .ship svg { animation: alarm 1s ease-in-out infinite; }
+@keyframes alarm { 50% { transform: translateY(-2px); filter: drop-shadow(0 0 5px var(--red)); } }
+.ghostship { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; transition: transform 1.6s cubic-bezier(.45, .05, .2, 1); display: flex; flex-direction: column; align-items: center; }
+.ghostship .ship { color: #e8fbff; filter: drop-shadow(0 0 10px rgba(95,215,215,.55)); opacity: .92; }
+.ghostship .ship svg { animation: hover 2.4s ease-in-out infinite; }
+@keyframes hover { 50% { transform: translateY(-5px); } }
+.ghost-tag { margin-bottom: 2px; font-size: 11px; color: var(--cyan); background: rgba(9,13,18,.85); border: 1px solid rgba(95,215,215,.3); border-radius: 999px; padding: 0 .6em; white-space: nowrap; }
+.ticker { background: var(--panel); border: 1px solid var(--hair); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 4px; max-height: 70vh; overflow-y: auto; position: sticky; top: 12px; }
+.ticker h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--yellow); margin-bottom: 4px; }
+.tick { display: flex; gap: .45em; align-items: baseline; text-align: left; background: none; border: 0; color: var(--fg); font-size: 12.5px; padding: .3em .35em; border-radius: 7px; cursor: pointer; }
+.tick:hover { background: var(--panel2); }
+.tick b { color: var(--c); font-family: var(--mono); }
+.tick span { flex: 1; }
+.tick small { color: var(--dim); white-space: nowrap; }
+@media (max-width: 900px) { .map-wrap { grid-template-columns: 1fr; } .ticker { position: static; max-height: 40vh; } }
+
+.ghost-beam { width: 2px; height: 8px; background: linear-gradient(rgba(95,215,215,.6), transparent); }
+
+.app:has(.composer) .as-launch { bottom: 96px; }

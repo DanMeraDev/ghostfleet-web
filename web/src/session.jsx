@@ -114,6 +114,33 @@ function Chat({ ctx, msgs, queued, older, onOlder }) {
   );
 }
 
+const hhmm = (at) => new Date(at * 1000).toLocaleString('es', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const localInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+function ScheduleModal({ name, onClose, onSave }) {
+  const [msg, setMsg] = useState('continúa');
+  const [when, setWhen] = useState(() => localInput(new Date(Date.now() + 3600e3)));
+  const [busy, setBusy] = useState(false);
+  const quick = [
+    ['En 30 min', () => Date.now() + 30 * 60e3],
+    ['En 1 hora', () => Date.now() + 3600e3],
+    ['En 3 horas', () => Date.now() + 3 * 3600e3],
+    ['Mañana 9:00', () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.getTime(); }],
+  ];
+  const save = async (ms) => { setBusy(true); try { await onSave(Math.floor(ms / 1000), msg.trim() || 'continúa'); onClose(); } finally { setBusy(false); } };
+  return (
+    <Modal title={`Programar un mensaje para ${name}`} onClose={onClose}>
+      <div class="stack modal-body">
+        <p class="muted">A la hora que elijas, ghostfleet le escribe este mensaje a la sesión, aunque nadie esté mirando. Sirve para retomar después del límite de uso o dejar algo para mañana.</p>
+        <label class="field"><span>Mensaje</span><textarea rows={3} value={msg} onInput={(e) => setMsg(e.currentTarget.value)} /></label>
+        <div class="quick">{quick.map(([l, f]) => <Btn key={l} kind="ghost" disabled={busy} onClick={() => save(f())}>{l}</Btn>)}</div>
+        <label class="field"><span>…o a una hora exacta</span><input type="datetime-local" value={when} onInput={(e) => setWhen(e.currentTarget.value)} /></label>
+        <footer><Btn onClick={onClose}>Cancelar</Btn><Btn kind="primary" disabled={busy || !when} onClick={() => save(new Date(when).getTime())}>Programar</Btn></footer>
+      </div>
+    </Modal>
+  );
+}
+
 export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
   const [tab, setTab] = useState('chat');
   const [extra, setExtra] = useState([]);      // older pages, loaded on demand
@@ -123,6 +150,8 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
   const [confirm, setConfirm] = useState(null);
   const [rename, setRename] = useState(null);
   const [menu, setMenu] = useState(false);
+  const [labelEdit, setLabelEdit] = useState(null);
+  const [schedOpen, setSchedOpen] = useState(false);
   const typing = useRef(false);
 
   const sess = usePoll(() => api.session(project, name), 3000, [project, name]);
@@ -187,6 +216,11 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
           <StatusPill status={st} />
           {card?.branch ? <span class="branch">⎇ {card.branch}</span> : null}
           {card?.pr ? <span class="tag pr">PR {card.pr}</span> : null}
+          {card?.label ? <button class="chip-label" title="Cambiar etiqueta" onClick={() => setLabelEdit(card.label)}>🏷 {card.label}</button> : null}
+          {card?.sched ? (
+            <span class="chip-sched" title={`Mensaje programado: ${card.sched.msg || ''}`}>⏰ {hhmm(card.sched.at)} · “{String(card.sched.msg || '').slice(0, 30)}”
+              <button aria-label="Cancelar programación" onClick={() => act('gfw_unschedule')}>✕</button></span>
+          ) : null}
         </div>
         <div class="sess-tools">
           <label class="owner-pick" title="Responsable de esta sesión">
@@ -208,6 +242,8 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
             <Btn kind="ghost sm" onClick={() => setMenu(m => !m)} aria-expanded={menu}>Más ▾</Btn>
             {menu ? (
               <div class="menu" onMouseLeave={() => setMenu(false)}>
+                <button onClick={() => { setMenu(false); setLabelEdit(card?.label || ''); }}>🏷 Ponerle etiqueta…</button>
+                <button onClick={() => { setMenu(false); setSchedOpen(true); }}>⏰ Programar un mensaje…</button>
                 <button onClick={() => { setMenu(false); setRename(name); }}>Renombrar…</button>
                 {!card?.lead ? <button onClick={() => { setMenu(false); stop(false); }}>Detener sesión…</button> : null}
                 {!card?.lead ? <button class="danger" onClick={() => { setMenu(false); stop(true); }}>Detener y borrar worktree…</button> : null}
@@ -223,6 +259,20 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
           </p>
         ) : null}
       </header>
+
+      {st === 'limit' ? (
+        <div class="ask limit">
+          <div class="ask-head"><b>⧗ Llegó al límite de uso de la cuenta</b>{card?.limit_at ? <span>el cupo vuelve {hhmm(card.limit_at)}</span> : null}</div>
+          <p class="muted small">Mientras tanto no puede seguir. Puedes dejarlo programado para que retome solo.</p>
+          {card?.sched
+            ? <p>Ya está programado para {hhmm(card.sched.at)}.</p>
+            : <div class="row wrap">
+                <Btn kind="primary" disabled={busy} onClick={() => act('gfw_schedule', { at: (card?.limit_at || Math.floor(Date.now() / 1000) + 5 * 3600) + 90, msg: 'continúa con la tarea donde la dejaste' })}>
+                  ⏰ Retomar solo cuando vuelva el cupo</Btn>
+                <Btn kind="ghost" onClick={() => setSchedOpen(true)}>Elegir otra hora…</Btn>
+              </div>}
+        </div>
+      ) : null}
 
       {prompt ? <PromptCard key={prompt.fingerprint} prompt={prompt} onAnswer={answer} busy={busy} /> : null}
 
@@ -244,6 +294,17 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
       </form>
 
       {confirm ? <Confirm {...confirm} onClose={() => setConfirm(null)} /> : null}
+      {schedOpen ? <ScheduleModal name={name} onClose={() => setSchedOpen(false)}
+                                  onSave={async (at, msg) => { const r = await act('gfw_schedule', { at, msg }); if (r) toast(r.text, 'good'); }} /> : null}
+      {labelEdit != null ? (
+        <Modal title="Etiqueta de la sesión" onClose={() => setLabelEdit(null)}>
+          <form class="stack modal-body" onSubmit={async (e) => { e.preventDefault(); const r = await act('gfw_label', { text: labelEdit }); if (r) setLabelEdit(null); }}>
+            <p class="muted">Una nota corta para reconocerla de un vistazo, como “urgente cliente” o “esperando a Camilo”. Se ve en la tarjeta y en la terminal. Vacía la quita.</p>
+            <label class="field"><span>Etiqueta (hasta 40 caracteres)</span><input maxLength={40} value={labelEdit} onInput={(e) => setLabelEdit(e.currentTarget.value)} autoFocus /></label>
+            <footer><Btn onClick={() => setLabelEdit(null)}>Cancelar</Btn><Btn kind="primary" type="submit">Guardar</Btn></footer>
+          </form>
+        </Modal>
+      ) : null}
       {rename != null ? (
         <Modal title="Renombrar sesión" onClose={() => setRename(null)}>
           <form class="stack modal-body" onSubmit={async (e) => {
