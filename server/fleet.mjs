@@ -175,29 +175,38 @@ export function act(tool, args) {
 // does yet, which is why fleet-serve refuses them. This mirrors those three functions
 // byte for byte; the right home is a ghostfleet command + MCP tool (see README).
 const fleetDir = (t) => path.join(t.cfg, 'fleet');
-const labelFile = (t, s) => path.join(fleetDir(t), `${t.sock}.${s}.label`);
-const schedFile = (t, s) => path.join(fleetDir(t), `${t.sock}.${s}.sched`);
+// The session is part of a file name here, and a `/` in it would walk out of the fleet dir.
+// index.mjs already refuses such names; this is the line that writes the file, so it checks too.
+const marker = (t, s, ext) => {
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._~-]{0,47}$/.test(String(s))) throw Object.assign(new Error(`nombre de sesión inválido: '${String(s).slice(0, 60)}'`), { status: 400 });
+  return path.join(fleetDir(t), `${t.sock}.${s}.${ext}`);
+};
+const labelFile = (t, s) => marker(t, s, 'label');
+const schedFile = (t, s) => marker(t, s, 'sched');
 const readSched = (t, s) => { try { return JSON.parse(fs.readFileSync(schedFile(t, s), 'utf8')); } catch { return null; } };
 
 export function setLabel(project, session, text) {
   const t = target(project);
+  const f = labelFile(t, session);                        // first: it refuses a bad name
   const v = String(text || '').trim().replace(/\s+/g, ' ').slice(0, 40);
   fs.mkdirSync(fleetDir(t), { recursive: true });
-  if (v) fs.writeFileSync(labelFile(t, session), v + '\n');
-  else { try { fs.unlinkSync(labelFile(t, session)); } catch {} }
+  if (v) fs.writeFileSync(f, v + '\n');
+  else { try { fs.unlinkSync(f); } catch {} }
   return { ok: true, text: v ? `etiqueta: ${v}` : 'etiqueta quitada' };
 }
 
 export function cancelSchedule(project, session) {
   const t = target(project);
+  const f = schedFile(t, session);                        // first: it refuses a bad name
   const m = readSched(t, session);
   if (m && m.pid) { try { process.kill(-m.pid, 'SIGTERM'); } catch {} try { process.kill(m.pid, 'SIGTERM'); } catch {} }
-  try { fs.unlinkSync(schedFile(t, session)); } catch {}
+  try { fs.unlinkSync(f); } catch {}
   return { ok: true, text: m ? 'programación cancelada' : 'no había nada programado' };
 }
 
 export function schedule(project, session, at, msg) {
   const t = target(project);
+  const f = schedFile(t, session);                        // before anything is spawned
   cancelSchedule(project, session);                       // replace, never stack
   const bin = path.join(GF_HOME, 'bin', 'fleet-schedule');
   const child = spawn(bin, [t.sock, session, String(at), msg], {
@@ -206,7 +215,7 @@ export function schedule(project, session, at, msg) {
   });
   child.unref();
   fs.mkdirSync(fleetDir(t), { recursive: true });
-  fs.writeFileSync(schedFile(t, session), JSON.stringify({ at, msg, pid: child.pid }));
+  fs.writeFileSync(f, JSON.stringify({ at, msg, pid: child.pid }));
   return { ok: true, text: `programado para ${new Date(at * 1000).toLocaleString('es')}` };
 }
 

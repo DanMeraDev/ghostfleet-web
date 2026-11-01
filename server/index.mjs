@@ -162,6 +162,10 @@ const TOOLS = {
   gfw_unschedule:        { fields: ['project', 'session'], local: true },
 };
 const BOOLS = new Set(['anyway', 'no_enter', 'force_new', 'reclaim', 'force']);
+// The gfw_* verbs do not go through ghostfleet's checks: their session becomes part of a FILE
+// name (fleet.mjs labelFile/schedFile). fleet-serve's NAME_OK without the `/`, so a name
+// cannot climb out of the fleet dir ("x/../../.bashrc").
+const SESSION_OK = /^[A-Za-z0-9][A-Za-z0-9 ._~-]{0,47}$/;
 function buildArgs(tool, raw) {
   const v = TOOLS[tool];
   if (!v) throw httpErr(400, `acción desconocida: ${tool}`);
@@ -174,6 +178,7 @@ function buildArgs(tool, raw) {
   }
   if (!out.project) throw httpErr(400, 'falta el proyecto');
   if (v.local && !out.session) throw httpErr(400, 'falta la sesión');
+  if (v.local && !SESSION_OK.test(out.session)) throw httpErr(400, `nombre de sesión inválido: '${out.session.slice(0, 60)}'`);
   return { args: out, v };
 }
 
