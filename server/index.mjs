@@ -35,6 +35,17 @@ if (!bindable(BIND)) {
   process.exit(2);
 }
 
+// ── Host: binding to loopback is not enough ─────────────────────────────────────────────
+// A page on evil.example can point its own name at 127.0.0.1 (DNS rebinding) and then talk
+// to this port as same-origin: X-GFW and SameSite do not help, because to the browser it IS
+// that origin. What it cannot fake is the Host it sends, so only the names this server is
+// reached by are answered. The port is not compared: `pnpm dev` arrives through vite's proxy
+// with vite's port, and a rebinding page differs in the NAME. GFW_HOSTS adds more names
+// (a MagicDNS name, comma-separated).
+const hostName = (h) => String(h || '').toLowerCase().replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+const HOSTS = new Set(['127.0.0.1', 'localhost', '::1', hostName(BIND),
+  ...String(process.env.GFW_HOSTS || '').split(',').map(hostName).filter(Boolean)]);
+
 const fleet = MODE === 'demo' ? await import('./demo.mjs') : await import('./fleet.mjs');
 const voice = await import('./voice.mjs');
 
@@ -57,6 +68,14 @@ const pwOk = (u, pw) => {
   return h.length === ref.length && crypto.timingSafeEqual(h, ref);
 };
 const publicUser = (u) => u && ({ id: u.id, name: u.name, color: u.color });
+// Until the first accounts exist, /api/setup is the one write anyone can make, and whoever
+// makes it owns the fleet. So it takes a code that only the terminal running this shows:
+// reaching the port (the tailnet, another local user) is not enough to claim it.
+let setupCode = users.length ? null : crypto.randomBytes(9).toString('base64url');
+const codeOk = (c) => {
+  const a = Buffer.from(String(c || '')), b = Buffer.from(setupCode || '');
+  return !!setupCode && a.length === b.length && crypto.timingSafeEqual(a, b);
+};
 function addUser(name, password) {
   const id = slug(name);
   if (!id) throw httpErr(400, 'el nombre no puede estar vacío');
@@ -215,9 +234,15 @@ async function route(req, res, url) {
   if (p === '/api/setup' && req.method === 'POST') {
     if (users.length) throw httpErr(409, 'las cuentas ya están creadas');
     const b = await body(req);
+    if (!codeOk(b.code)) {
+      audit({ user: '?', verb: 'setup', ip, result: 'refused' });
+      await new Promise(r => setTimeout(r, 600));
+      throw httpErr(403, 'el código de instalación no coincide: es el que muestra la terminal donde corre el servidor');
+    }
     const list = (b.users || []).filter(u => u && u.name);
     if (!list.length) throw httpErr(400, 'crea al menos una cuenta');
     for (const u of list) addUser(u.name, u.password);
+    setupCode = null;
     const first = users[0];
     if (MODE === 'demo') seedDemoOwners();
     audit({ user: first.id, verb: 'setup', subject: users.map(u => u.name).join(', '), result: 'ran' });
@@ -364,6 +389,8 @@ async function route(req, res, url) {
 }
 
 const server = http.createServer(async (req, res) => {
+  if (req.headers.host && !HOSTS.has(hostName(req.headers.host)))
+    return send(res, 403, { ok: false, text: `Host inesperado '${req.headers.host}': este servidor responde a ${[...HOSTS].join(', ')} (GFW_HOSTS para sumar otro)` });
   const url = new URL(req.url, 'http://x');
   if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
   try { await route(req, res, url); }
@@ -373,7 +400,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.listen(PORT, BIND, () => {
+  const origin = `http://${BIND.includes(':') ? `[${BIND}]` : BIND}:${PORT}`;
   console.log(`ghostfleet web · modo ${MODE === 'demo' ? 'DEMO (datos de ejemplo)' : 'REAL (tu flota)'}`);
-  console.log(`  http://${BIND.includes(':') ? `[${BIND}]` : BIND}:${PORT}`);
+  console.log(`  ${origin}`);
   console.log(`  datos: ${DATA}`);
+  if (setupCode) console.log(`  primera vez: código de instalación ${setupCode}\n  (o abre ${origin}/#codigo=${setupCode}, que ya lo trae)`);
 });

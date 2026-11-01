@@ -14,21 +14,30 @@ function Shell({ mode, children }) {
   );
 }
 
+// The terminal prints a link that carries the code (#codigo=…), so opening it fills the field.
+const codeFromLink = () => (/(?:^#|&)codigo=([A-Za-z0-9_-]+)/.exec(location.hash) || [])[1] || '';
+
 export function Setup({ mode, onDone }) {
   const [rows, setRows] = useState([{ name: '', password: '' }, { name: '', password: '' }]);
+  const [code, setCode] = useState(codeFromLink);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (i, k, v) => setRows(r => r.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setBusy(true);
-    try { const r = await api.setup(rows.filter(r => r.name.trim())); onDone(r.user); }
-    catch (x) { setErr(x.message); } finally { setBusy(false); }
+    try {
+      const r = await api.setup(rows.filter(r => r.name.trim()), code.trim());
+      if (codeFromLink()) history.replaceState(null, '', location.pathname);
+      onDone(r.user);
+    } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
   return (
     <Shell mode={mode}>
       <h1>Crea las cuentas del equipo</h1>
       <p class="muted">Una por persona que va a usar la flota. Cada acción queda registrada con su nombre, y cada sesión tiene un responsable.</p>
       <form onSubmit={submit} class="stack">
+        <label class="field"><span>Código de instalación</span>
+          <input value={code} onInput={(e) => setCode(e.currentTarget.value)} placeholder="Lo muestra la terminal donde corre el servidor" autocomplete="off" spellcheck={false} /></label>
         {rows.map((r, i) => (
           <fieldset class="person" key={i}>
             <legend>Persona {i + 1}</legend>

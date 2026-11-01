@@ -85,6 +85,11 @@ Igual que `fleet-serve`, esto es **ejecución remota de código por diseño**: m
 agente es correr comandos en esta máquina. Por eso:
 
 - solo escucha en loopback o en Tailscale, y se niega a abrirse a la red local o a internet;
+- solo responde a los nombres por los que se le llega (`127.0.0.1`, `localhost`, la IP de `--bind` y los de
+  `GFW_HOSTS`, p. ej. un nombre MagicDNS): una página ajena que apunte su dominio a esta máquina (DNS rebinding)
+  recibe 403;
+- la primera vez, crear las cuentas pide el código de instalación que imprime la terminal (o el link
+  `#codigo=…` que lo trae): llegar al puerto no alcanza para adueñarse de la flota;
 - todo pide sesión iniciada; las contraseñas se guardan con scrypt y la cookie es `HttpOnly` + `SameSite=Strict`;
 - toda escritura queda en la actividad con el nombre de quien la hizo;
 - detener o borrar worktrees pide confirmación (y escribir el nombre, si borra);

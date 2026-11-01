@@ -19,7 +19,7 @@ const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v != n
 
 export const api = {
   health: () => call('GET', '/api/health'),
-  setup: (users) => call('POST', '/api/setup', { users }),
+  setup: (users, code) => call('POST', '/api/setup', { users, code }),
   login: (name, password) => call('POST', '/api/login', { name, password }),
   logout: () => call('POST', '/api/logout'),
   users: () => call('GET', '/api/users'),
