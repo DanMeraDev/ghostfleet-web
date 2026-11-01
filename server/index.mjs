@@ -209,12 +209,14 @@ function serveStatic(res, pathname) {
     res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('Falta compilar la interfaz: corre `pnpm build` (o `pnpm dev` para desarrollo).');
   }
-  let f = path.join(DIST, path.normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, ''));
-  if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+  let rel;
+  try { rel = decodeURIComponent(pathname); } catch { throw httpErr(400, 'ruta mal codificada'); }
+  let f = path.join(DIST, path.normalize(rel).replace(/^([/\\])+/, ''));
+  if (!f.startsWith(DIST + path.sep) ||!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream',
                        'Cache-Control': f.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
                        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
-  fs.createReadStream(f).pipe(res);
+  fs.createReadStream(f).on('error', () => res.destroy()).pipe(res);   // a stream error is an uncaught throw
 }
 const q = (url, k) => url.searchParams.get(k) || '';
 
@@ -391,10 +393,14 @@ async function route(req, res, url) {
 const server = http.createServer(async (req, res) => {
   if (req.headers.host && !HOSTS.has(hostName(req.headers.host)))
     return send(res, 403, { ok: false, text: `Host inesperado '${req.headers.host}': este servidor responde a ${[...HOSTS].join(', ')} (GFW_HOSTS para sumar otro)` });
-  const url = new URL(req.url, 'http://x');
-  if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
-  try { await route(req, res, url); }
-  catch (e) {
+  // Everything a request can throw stays in this try: the handler is async, so an escape
+  // is an unhandled rejection, and that ends the process — one `GET /%E0%A4%A` used to
+  // take the fleet's web down for everyone (decodeURIComponent in serveStatic).
+  try {
+    const url = new URL(req.url, 'http://x');
+    if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
+    await route(req, res, url);
+  } catch (e) {
     if (!res.headersSent) send(res, e.status || 500, { ok: false, text: e.message || 'error interno' });
     if (!e.status) console.error(e);
   }
