@@ -11,6 +11,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { GF_HOME } from './paths.mjs';
+import * as attachments from './attach.mjs';
 
 const need = (rel) => {
   const p = path.join(GF_HOME, rel);
@@ -217,6 +218,12 @@ export function schedule(project, session, at, msg) {
   fs.mkdirSync(fleetDir(t), { recursive: true });
   fs.writeFileSync(f, JSON.stringify({ at, msg, pid: child.pid }));
   return { ok: true, text: `programado para ${new Date(at * 1000).toLocaleString('es')}` };
+}
+
+export function attach(project, session, name, buf) {
+  const t = target(project);
+  marker(t, session, 'attach');                           // first: it refuses a bad name
+  return attachments.save(path.join(fleetDir(t), 'attach', `${t.sock}.${session}`), name, buf);
 }
 
 export const mode = 'real';

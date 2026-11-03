@@ -36,6 +36,9 @@ Para desarrollo con recarga en caliente: `pnpm dev:demo` o `pnpm dev`, y abre <h
   filtros por persona, worktrees libres y el asistente *Nueva sesión*.
 - **Sesión**: la conversación como chat (con quién mandó cada instrucción), la terminal en vivo,
   los permisos como botones (*Sí, permitir / No*), y pausar, interrumpir, renombrar y detener.
+- **Adjuntar archivos o imágenes** en el chat de cualquier sesión: 📎, arrastrar o pegar (hasta 10 por
+  mensaje, 25 MB cada uno). Se guardan donde ghostfleet guarda las fotos del celular
+  (`$CLAUDE_FLEET_DIR/attach/<socket>.<sesión>/`, con cuota por sesión) y el mensaje le pasa las rutas.
 - **Responsable y presencia**: cada sesión tiene un dueño, y se ve cuando el otro está mirando o escribiendo.
 - **Actividad**: todo lo que se hizo, con nombre y hora.
 - **Asistente de voz**: le hablas al líder (`master`) del proyecto, o a Jarvis si está activado, y él

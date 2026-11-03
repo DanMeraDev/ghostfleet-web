@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { ATTACH_MAX_BYTES } from './attach.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -194,9 +195,9 @@ async function body(req) {
   if (!n) return {};
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw httpErr(400, 'body no es JSON'); }
 }
-async function rawBody(req, cap) {
+async function rawBody(req, cap, what = 'el audio') {
   let n = 0; const chunks = [];
-  for await (const c of req) { n += c.length; if (n > cap) throw httpErr(413, `el audio pasa el límite de ${Math.round(cap / 1048576)} MB`); chunks.push(c); }
+  for await (const c of req) { n += c.length; if (n > cap) throw httpErr(413, `${what} pasa el límite de ${Math.round(cap / 1048576)} MB`); chunks.push(c); }
   return Buffer.concat(chunks);
 }
 async function localAct(tool, a) {
@@ -354,6 +355,17 @@ async function route(req, res, url) {
     console.log(new Date().toISOString().slice(11, 19), `hear: ${Math.round(wav.length / 1024)} KB en ${Date.now() - t0} ms`);
     if (r.error) return send(res, 502, { ok: false, text: r.error });
     return send(res, 200, { ok: true, text: r.text, ms: Date.now() - t0 });
+  }
+  // A file for a session: the raw bytes in the body, where it goes in the query. It is saved
+  // and its path handed back; the message that names it is an ordinary fleet_send.
+  if (p === '/api/attach' && req.method === 'POST') {
+    const project = q(url, 'project'), session = q(url, 'session'), name = q(url, 'name');
+    if (!project) throw httpErr(400, 'falta el proyecto');
+    if (!SESSION_OK.test(session)) throw httpErr(400, `nombre de sesión inválido: '${session.slice(0, 60)}'`);
+    const buf = await rawBody(req, ATTACH_MAX_BYTES, 'el archivo');
+    const r = fleet.attach(project, session, name, buf);
+    audit({ user: me.id, verb: 'attach', project, subject: session, result: 'ran', output: `${r.name} (${Math.round(r.size / 1024)} KB)` });
+    return send(res, 200, r);
   }
   if (p === '/api/speak' && req.method === 'POST') {
     const b = await body(req);

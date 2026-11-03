@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { api } from './api.js';
+import { api, ATTACH_PER_MESSAGE } from './api.js';
 import { statusOf, StatusPill, Avatar, Btn, usePoll, toast, Markdown, Confirm, Modal, sinceTs } from './ui.jsx';
 import { render as renderAnsi } from './vendor/ansi.js';
 
@@ -152,7 +152,11 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
   const [menu, setMenu] = useState(false);
   const [labelEdit, setLabelEdit] = useState(null);
   const [schedOpen, setSchedOpen] = useState(false);
+  const [files, setFiles] = useState([]);       // {id, name, size, state: 'up'|'ok'|'err', path, preview, why}
+  const [drag, setDrag] = useState(false);
+  const picker = useRef(null);
   const typing = useRef(false);
+  useEffect(() => { setFiles([]); }, [project, name]);
 
   const sess = usePoll(() => api.session(project, name), 3000, [project, name]);
   const pane = usePoll(() => api.pane(project, name), 2500, [project, name]);
@@ -182,11 +186,32 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
     } finally { setBusy(false); }
   };
   const answer = (text, noEnter) => act('fleet_answer', { text, no_enter: noEnter, expect: prompt?.fingerprint });
+  // Each file goes up as soon as it is picked, so "Enviar" only sends the words that name them.
+  const addFiles = (list) => {
+    const picked = [...(list || [])].slice(0, Math.max(0, ATTACH_PER_MESSAGE - files.length));
+    if (list?.length > picked.length) toast(`Hasta ${ATTACH_PER_MESSAGE} archivos por mensaje.`, '');
+    for (const f of picked) {
+      const id = Math.random().toString(36).slice(2);
+      const preview = f.type.startsWith('image/') ? URL.createObjectURL(f) : null;
+      setFiles(x => [...x, { id, name: f.name || 'imagen pegada', size: f.size, state: 'up', preview }]);
+      api.attach(project, name, f)
+        .then(r => setFiles(x => x.map(y => y.id === id ? { ...y, state: 'ok', path: r.path } : y)))
+        .catch(e => setFiles(x => x.map(y => y.id === id ? { ...y, state: 'err', why: e.message } : y)));
+    }
+  };
+  const dropFile = (id) => setFiles(x => { const f = x.find(y => y.id === id); if (f?.preview) URL.revokeObjectURL(f.preview); return x.filter(y => y.id !== id); });
+  const uploading = files.some(f => f.state === 'up');
+  const ready = files.filter(f => f.state === 'ok');
   const sendDraft = async () => {
     const text = draft.trim();
-    if (!text) return;
-    const r = await act('fleet_send', { prompt: text });
-    if (r) { setDraft(''); typing.current = false; }
+    if ((!text && !ready.length) || uploading) return;
+    // Words first: a message that opens with a path (`/home/…`) reads as a slash command.
+    const list = ready.map(f => `- ${f.path}`).join('\n');
+    const prompt = !ready.length ? text
+      : `${text || (ready.length === 1 ? 'Te adjunto este archivo.' : 'Te adjunto estos archivos.')}\n\n` +
+        `${ready.length === 1 ? 'Archivo adjunto (ábrelo desde esta ruta)' : 'Archivos adjuntos (ábrelos desde estas rutas)'}:\n${list}`;
+    const r = await act('fleet_send', { prompt });
+    if (r) { setDraft(''); typing.current = false; for (const f of files) if (f.preview) URL.revokeObjectURL(f.preview); setFiles([]); }
   };
   const loadOlder = async () => {
     try {
@@ -286,11 +311,31 @@ export function SessionView({ ctx, project, name, card, onChanged, onGone }) {
             : <Chat ctx={ctx} msgs={msgs} queued={sess.data?.queued || []} older={before != null} onOlder={loadOlder} />)
         : <Terminal pane={pane.data?.pane ?? null} />}
 
-      <form class="composer" onSubmit={(e) => { e.preventDefault(); sendDraft(); }}>
-        <textarea rows={2} value={draft} placeholder={prompt ? 'Tiene un pedido pendiente arriba; lo que escribas queda en cola hasta responderlo.' : `Escríbele a ${name}…  (Enter envía, Shift+Enter salto de línea)`}
-                  onInput={(e) => { setDraft(e.currentTarget.value); typing.current = !!e.currentTarget.value; }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDraft(); } }} />
-        <Btn kind="primary" type="submit" disabled={busy || !draft.trim()}>Enviar</Btn>
+      <form class={`composer${drag ? ' drag' : ''}`} onSubmit={(e) => { e.preventDefault(); sendDraft(); }}
+            onDragOver={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDrag(true); } }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); } }}>
+        {files.length ? (
+          <div class="att-list">
+            {files.map(f => (
+              <span key={f.id} class={`att att-${f.state}`} title={f.why || f.path || f.name}>
+                {f.preview ? <img src={f.preview} alt="" /> : <i class="att-ico">📄</i>}
+                <span class="att-name">{f.name}</span>
+                <small>{f.state === 'up' ? 'subiendo…' : f.state === 'err' ? 'no se subió' : `${Math.max(1, Math.round(f.size / 1024))} KB`}</small>
+                <button type="button" class="att-x" aria-label={`Quitar ${f.name}`} onClick={() => dropFile(f.id)}>✕</button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <div class="composer-row">
+          <button type="button" class="attach-btn" onClick={() => picker.current?.click()} title="Adjuntar archivos o imágenes" aria-label="Adjuntar archivos o imágenes">📎</button>
+          <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles(e.currentTarget.files); e.currentTarget.value = ''; }} />
+          <textarea rows={2} value={draft} placeholder={drag ? 'Suelta aquí los archivos…' : prompt ? 'Tiene un pedido pendiente arriba; lo que escribas queda en cola hasta responderlo.' : `Escríbele a ${name}…  (📎 o arrastra un archivo · Enter envía)`}
+                    onInput={(e) => { setDraft(e.currentTarget.value); typing.current = !!e.currentTarget.value; }}
+                    onPaste={(e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDraft(); } }} />
+          <Btn kind="primary" type="submit" disabled={busy || uploading || (!draft.trim() && !ready.length)}>{uploading ? 'Subiendo…' : 'Enviar'}</Btn>
+        </div>
       </form>
 
       {confirm ? <Confirm {...confirm} onClose={() => setConfirm(null)} /> : null}

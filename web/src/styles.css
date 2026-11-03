@@ -249,8 +249,23 @@ textarea { resize: vertical; }
 .pane { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.35; color: var(--fg); white-space: pre; }
 .pane .c { display: inline-block; width: 1ch; text-align: center; font-style: normal; }
 .pane .c.w { width: 2ch; }
-.composer { display: flex; gap: 10px; align-items: flex-end; padding: 12px 22px 16px; border-top: 1px solid var(--hair); background: var(--bg); }
+.composer { display: flex; flex-direction: column; gap: 8px; padding: 12px 22px 16px; border-top: 1px solid var(--hair); background: var(--bg); }
+.composer.drag { background: rgba(95,215,215,.06); box-shadow: inset 0 0 0 2px rgba(95,215,215,.45); }
+.composer-row { display: flex; gap: 10px; align-items: flex-end; }
 .composer textarea { flex: 1 1 auto; min-height: 46px; max-height: 220px; }
+.attach-btn { flex: none; width: 46px; height: 46px; border-radius: 10px; border: 1px solid var(--hair); background: #12171d; font-size: 20px; cursor: pointer; }
+.attach-btn:hover { border-color: var(--cyan); background: rgba(95,215,215,.08); }
+.att-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.att { display: inline-flex; align-items: center; gap: 8px; max-width: 280px; padding: 4px 6px 4px 4px; border-radius: 10px;
+       border: 1px solid var(--hair); background: #12171d; font-size: 12.5px; }
+.att img { width: 34px; height: 34px; object-fit: cover; border-radius: 6px; }
+.att-ico { width: 34px; height: 34px; display: grid; place-items: center; font-style: normal; font-size: 18px; }
+.att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att small { color: var(--dim); white-space: nowrap; }
+.att-up small { color: var(--cyan); }
+.att-err { border-color: rgba(255,95,95,.5); } .att-err small { color: var(--red); }
+.att-x { background: none; border: 0; color: var(--dim); cursor: pointer; padding: 2px 4px; }
+.att-x:hover { color: var(--white); }
 .err.pad { padding: 18px 22px; }
 
 /* ── activity & settings ─────────────────────────────── */
@@ -455,6 +470,7 @@ textarea { resize: vertical; }
 .ghost-beam { width: 2px; height: 8px; background: linear-gradient(rgba(95,215,215,.6), transparent); }
 
 .app:has(.composer) .as-launch { bottom: 96px; }
+.app:has(.att-list) .as-launch { bottom: 150px; }
 
 /* ── phase 3: home agent, console, picker, tree ──────── */
 .home-agent { background: linear-gradient(180deg, rgba(95,215,215,.07), rgba(95,215,215,.015)); border: 1px solid rgba(95,215,215,.28);

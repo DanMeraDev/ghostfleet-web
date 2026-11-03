@@ -37,4 +37,17 @@ export const api = {
   voice: () => call('GET', '/api/voice'),
   lead: (project) => call('POST', '/api/lead', { project }),
   speak: (text) => call('POST', '/api/speak', { text }),
+  // The file's own bytes as the body (no base64), where it goes in the query.
+  attach: async (project, session, file) => {
+    if (file.size > ATTACH_MAX_BYTES) throw new Error(`${file.name} pesa más de ${ATTACH_MAX_BYTES / 1048576} MB`);
+    const res = await fetch(`/api/attach?${qs({ project, session, name: file.name })}`, {
+      method: 'POST', headers: { 'X-GFW': '1', 'Content-Type': file.type || 'application/octet-stream' },
+      body: file, credentials: 'same-origin',
+    });
+    let j = null; try { j = await res.json(); } catch {}
+    if (!res.ok || !j?.ok) throw new Error(j?.text || `error ${res.status}`);
+    return j;
+  },
 };
+export const ATTACH_MAX_BYTES = 25 * 1024 * 1024;     // server/attach.mjs holds the same
+export const ATTACH_PER_MESSAGE = 10;

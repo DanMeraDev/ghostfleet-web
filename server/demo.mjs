@@ -1,5 +1,9 @@
 // server/demo.mjs — a pretend fleet, in memory, so the app can be shown and clicked through
 // without touching a real session. Same interface as fleet.mjs; nothing here runs a process.
+import os from 'node:os';
+import path from 'node:path';
+import * as attachments from './attach.mjs';
+
 const now = () => Math.floor(Date.now() / 1000);
 const ago = (min) => now() - min * 60;
 
@@ -242,6 +246,12 @@ export function schedule(project, session, at, msg) {
   const wait = Math.min(Math.max(0, at * 1000 - Date.now()), 2 ** 31 - 1);
   timers.set(`${project}/${session}`, setTimeout(() => { k.sched = null; act('fleet_send', { project, session, prompt: msg }); }, wait));
   return { ok: true, text: `programado para ${new Date(at * 1000).toLocaleString('es')}` };
+}
+
+// Real files, in a throwaway folder: the demo's sessions are pretend, the upload is not.
+export function attach(project, session, name, buf) {
+  find(project, session);
+  return attachments.save(path.join(os.tmpdir(), 'ghostfleet-web-demo', 'attach', `${project}.${session}`), name, buf);
 }
 
 export const reset = () => { for (const t of timers.values()) clearTimeout(t); timers.clear(); P = seed(); };

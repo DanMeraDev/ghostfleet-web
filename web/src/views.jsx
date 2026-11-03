@@ -14,7 +14,7 @@ export function Home({ ctx, projects }) {
 }
 
 const VERBS = {
-  fleet_send: 'le escribió a', fleet_answer: 'respondió un pedido de', fleet_interrupt: 'interrumpió a',
+  fleet_send: 'le escribió a', attach: 'adjuntó un archivo a', fleet_answer: 'respondió un pedido de', fleet_interrupt: 'interrumpió a',
   fleet_pause: 'pausó', fleet_resume: 'reanudó', fleet_wake: 'despertó', fleet_reopen: 'reabrió',
   fleet_spawn: 'creó la sesión', fleet_stop: 'detuvo', fleet_rename: 'renombró', fleet_worktree_remove: 'borró el worktree',
   fleet_unqueue: 'sacó de la cola un mensaje de', assign: 'cambió el responsable de', login: 'entró', setup: 'creó las cuentas',
