@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { api } from './api.js';
 import { STATUS, statusOf } from './ui.jsx';
-import { voiceStatus, listenLocal, listenBrowser, browserCanHear, speak, stopSpeaking } from './voice.js';
+import { voiceStatus, listenLocal, listenBrowser, browserCanHear, speak, stopSpeaking, warmVad, PAUSES } from './voice.js';
 import { resolve } from './resolve.js';
 
 const store = {
@@ -29,6 +29,7 @@ export const S = {
   voiceOut: store.get('voiceOut', true),
   handsFree: store.get('handsFree', false),
   follow: store.get('follow', true),
+  pause: PAUSES[store.get('pause', 'normal')] ? store.get('pause', 'normal') : 'normal',   // key of PAUSES
   vs: null,
 };
 const subs = new Set();
@@ -85,6 +86,7 @@ function listen() {
   set({ interim: '', level: 0, phase: 'listening' });
   const my = gen;
   const common = {
+    pauseMs: PAUSES[S.pause].ms,
     onState: (s) => { if (my === gen) set({ phase: s }); },
     onError: (m) => { if (my !== gen) return; push({ kind: 'event', text: m, bad: true }); set({ conversing: false }); },
     onText: (t) => {
@@ -237,7 +239,7 @@ export function bind(next) {
   if (!loop) {
     loop = setInterval(tick, 2500);
     resetWatch();
-    voiceStatus(true).then(vs => set({ vs }));
+    voiceStatus(true).then(vs => { set({ vs }); if (vs.hear?.ready) warmVad(); });
   }
 }
 export function unbind() { stop(); clearInterval(loop); loop = null; ctx = null; }

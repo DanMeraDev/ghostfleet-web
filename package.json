@@ -6,9 +6,9 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "dev:demo": "node scripts/dev.mjs --demo",
-    "build": "vite build",
+    "dev": "node scripts/copy-vad.mjs && node scripts/dev.mjs",
+    "dev:demo": "node scripts/copy-vad.mjs && node scripts/dev.mjs --demo",
+    "build": "node scripts/copy-vad.mjs && vite build",
     "start": "node server/index.mjs",
     "demo": "node server/index.mjs --demo"
   },
@@ -19,5 +19,8 @@
     "@preact/preset-vite": "2.10.2",
     "preact": "10.26.9",
     "vite": "6.3.5"
+  },
+  "dependencies": {
+    "@ricky0123/vad-web": "0.0.31"
   }
 }

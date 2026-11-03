@@ -30,9 +30,109 @@ function wav16k(chunks, rate) {
   return new Blob([buf], { type: 'audio/wav' });
 }
 
+// How long a pause has to be before "I'm done" — the person picks. A pause to think is not the
+// end of a sentence; 1.2 s cut people off mid-thought. 'manual' waits for "Ya terminé".
+export const PAUSES = {
+  normal: { ms: 2500, label: 'Espero una pausa de 2,5 s y envío' },
+  larga:  { ms: 4500, label: 'Espero una pausa larga (4,5 s), para pensar' },
+  manual: { ms: 0,    label: 'No corto solo: espero a que toques «Ya terminé»' },
+};
+const AUDIO = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+const transcribe = async (blob) => {
+  const res = await fetch('/api/hear', { method: 'POST', headers: { 'X-GFW': '1', 'Content-Type': 'audio/wav' }, body: blob });
+  const j = await res.json();
+  if (!res.ok || !j.ok) throw new Error(j.text || `error ${res.status}`);
+  return String(j.text || '').trim();
+};
+const rmsOf = (d) => { let s = 0; for (let i = 0; i < d.length; i++) s += d[i] * d[i]; return Math.sqrt(s / d.length); };
+const micDenied = 'El navegador no dio permiso al micrófono. Actívalo en el candado de la barra de direcciones.';
+
+// ── when has the person finished? Silero VAD, a model of human speech ───────────────────
+// Loudness cannot tell a breath, a keyboard or a fan from a word, so the old meter both cut
+// people off and waited on noise. Silero (via @ricky0123/vad-web, the same detector Handy
+// uses) scores every 32 ms frame for speech. Its files are served from VAD_DIR, copied there
+// by scripts/copy-vad.mjs; one detector is kept for the page, and the microphone is released
+// between turns. If it cannot load, the loudness meter below is the fallback.
+export const VAD_DIR = '/vad-0.0.31/';
+let vad = null, vadLoad = null, vadBroken = false, turn = null;
+export function warmVad() {
+  if (vad || vadBroken) return Promise.resolve(vad);
+  vadLoad ||= import('@ricky0123/vad-web').then(({ MicVAD }) => MicVAD.new({
+    model: 'v5', baseAssetPath: VAD_DIR, onnxWASMBasePath: VAD_DIR, startOnLoad: false,
+    ortConfig: (ort) => { ort.env.logLevel = 'error'; ort.env.wasm.numThreads = 1; },
+    getStream: () => navigator.mediaDevices.getUserMedia({ audio: AUDIO }),
+    resumeStream: () => navigator.mediaDevices.getUserMedia({ audio: AUDIO }),
+    positiveSpeechThreshold: 0.5, negativeSpeechThreshold: 0.35,
+    preSpeechPadMs: 600, minSpeechMs: 250, redemptionMs: PAUSES.normal.ms,
+    submitUserSpeechOnPause: true,                 // "Ya terminé" hands over what was said so far
+    onFrameProcessed: (p, f) => turn?.frame(p, f),
+    onSpeechStart: () => turn?.start(),
+    onSpeechEnd: (a) => turn?.end(a),
+    onVADMisfire: () => turn?.misfire(),
+  })).then(v => (vad = v), (e) => { vadBroken = true; console.warn('VAD no cargó, uso el medidor de volumen:', e); return null; })
+    .finally(() => { vadLoad = null; });
+  return vadLoad;
+}
+
 // Returns a handle {stop, cancel}. Callbacks: onLevel(0..1), onState('listening'|'hearing'),
-// onText(text) with the transcript, onError(msg).
-export function listenLocal({ onLevel, onState, onText, onError, silenceMs = 1200, maxMs = 30000 }) {
+// onSpeaking(bool) while words are coming in, onText(text) with the transcript, onError(msg).
+// pauseMs: silence that ends the turn; 0 = only stop() ends it.
+export function listenLocal(opts) {
+  let h = null, cancelled = false;
+  const pending = { stop: () => { if (h) h.stop(); else pending.stopAsked = true; }, cancel: () => { cancelled = true; h?.cancel(); } };
+  warmVad().then((v) => {
+    if (cancelled) return;
+    h = v ? listenVad(v, opts) : listenLoudness(opts);
+    if (pending.stopAsked) h.stop();
+  });
+  return pending;
+}
+
+function listenVad(v, { onLevel, onState, onSpeaking, onText, onError, pauseMs = PAUSES.normal.ms, maxMs = 180000 }) {
+  let done = false, spoke = false;
+  const t0 = performance.now();
+  const end = async (audio) => {
+    if (done) return; done = true;
+    turn = null;
+    clearInterval(watch);
+    try { await v.pause(); } catch {}
+    onSpeaking?.(false);
+    if (!audio || audio.length < 16000 * 0.25) { onText?.(''); return; }
+    onState?.('hearing');
+    try { onText?.(await transcribe(wav16k([audio], 16000))); }
+    catch (e) { onError?.(`No se pudo transcribir: ${e.message}`); onText?.(''); }
+  };
+  let got = null;
+  const me = turn = {
+    frame: (p, f) => { if (turn === me) onLevel?.(Math.min(1, rmsOf(f) * 12)); },
+    start: () => { spoke = true; onSpeaking?.(true); },
+    misfire: () => onSpeaking?.(false),        // a cough or a click: keep listening
+    end: (audio) => {
+      got = audio;
+      if (pauseMs) end(audio);                 // manual mode only ends from stop()
+    },
+  };
+  // Manual mode: a long pause must not end the turn, so the detector's own end is pushed far out.
+  v.setOptions({ redemptionMs: pauseMs || 10 * 60e3 });
+  const watch = setInterval(() => {
+    const t = performance.now() - t0;
+    if (!spoke && t > 15000) cancel();         // nobody said anything
+    else if (t > maxMs) stop();
+  }, 500);
+  // pause() with submitUserSpeechOnPause emits onSpeechEnd (into `got`) before it resolves.
+  const stop = async () => {
+    if (done) return;
+    if (turn === me) { try { await v.pause(); } catch {} }
+    end(got);
+  };
+  const cancel = () => { got = null; spoke = false; end(null); };
+  v.start().then(() => { if (!done) onState?.('listening'); }, () => { onError?.(micDenied); cancel(); });
+  return { stop, cancel };
+}
+
+// The fallback: a loudness meter. The room's noise is learned while nobody is talking, and
+// capped, so starting to speak right away no longer makes every later word count as noise.
+function listenLoudness({ onLevel, onState, onSpeaking, onText, onError, pauseMs = PAUSES.normal.ms, maxMs = 180000 }) {
   let stream, ctx, node, src, done = false, spoke = false, quietSince = 0;
   const chunks = [];
   const t0 = performance.now();
@@ -42,37 +142,32 @@ export function listenLocal({ onLevel, onState, onText, onError, silenceMs = 120
     try { stream?.getTracks().forEach(t => t.stop()); } catch {}
     const rate = ctx?.sampleRate || 48000;
     try { await ctx?.close(); } catch {}
+    onSpeaking?.(false);
     if (!send || !spoke || !chunks.length) { onText?.(''); return; }
     onState?.('hearing');
-    try {
-      const res = await fetch('/api/hear', { method: 'POST', headers: { 'X-GFW': '1', 'Content-Type': 'audio/wav' }, body: wav16k(chunks, rate) });
-      const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.text || `error ${res.status}`);
-      onText?.(String(j.text || '').trim());
-    } catch (e) { onError?.(`No se pudo transcribir: ${e.message}`); onText?.(''); }
+    try { onText?.(await transcribe(wav16k(chunks, rate))); }
+    catch (e) { onError?.(`No se pudo transcribir: ${e.message}`); onText?.(''); }
   };
   (async () => {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-    } catch (e) { done = true; onError?.('El navegador no dio permiso al micrófono. Actívalo en el candado de la barra de direcciones.'); onText?.(''); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO }); }
+    catch { done = true; onError?.(micDenied); onText?.(''); return; }
     ctx = new AudioContext();
     src = ctx.createMediaStreamSource(stream);
     node = ctx.createScriptProcessor(4096, 1, 1);
-    let floor = 0.01;
+    let floor = 0.008;
     node.onaudioprocess = (e) => {
       if (done) return;
       const d = e.inputBuffer.getChannelData(0);
       chunks.push(new Float32Array(d));
-      let sum = 0; for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
-      const rms = Math.sqrt(sum / d.length);
+      const rms = rmsOf(d);
       const now = performance.now();
-      if (now - t0 < 400) floor = Math.max(floor, rms * 1.5);        // learn the room's noise first
-      const loud = rms > Math.max(0.015, floor * 2);
+      const loud = rms > Math.max(0.015, floor * 2.5);
+      if (!loud) floor = Math.min(0.03, floor * 0.95 + rms * 0.05);
       onLevel?.(Math.min(1, rms * 12));
-      if (loud) { spoke = true; quietSince = 0; } else if (spoke && !quietSince) quietSince = now;
-      if (spoke && quietSince && now - quietSince > silenceMs) finish(true);
+      if (loud) { if (!spoke) onSpeaking?.(true); spoke = true; quietSince = 0; } else if (spoke && !quietSince) quietSince = now;
+      if (pauseMs && spoke && quietSince && now - quietSince > pauseMs) finish(true);
       else if (now - t0 > maxMs) finish(true);
-      else if (!spoke && now - t0 > 8000) finish(false);             // nobody said anything
+      else if (!spoke && now - t0 > 15000) finish(false);            // nobody said anything
     };
     src.connect(node); node.connect(ctx.destination);
     onState?.('listening');
@@ -83,23 +178,27 @@ export function listenLocal({ onLevel, onState, onText, onError, silenceMs = 120
 // ── hearing, in the browser: Chrome/Edge/Safari's recogniser ────────────────────────────
 const Recognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
 export const browserCanHear = !!Recognition;
-export function listenBrowser({ onInterim, onState, onText, onError, lang = 'es-ES' }) {
+// continuous: with `false` Chrome ends at the first breath. It keeps going, and the pause the
+// person chose ends it (no new words for pauseMs), or stop() does.
+export function listenBrowser({ onInterim, onState, onText, onError, pauseMs = PAUSES.normal.ms, lang = 'es-ES' }) {
   const r = new Recognition();
-  r.lang = lang; r.interimResults = true; r.continuous = false;
-  let final = '';
+  r.lang = lang; r.interimResults = true; r.continuous = true;
+  let final = '', quiet = null;
+  const hush = () => { clearTimeout(quiet); if (pauseMs) quiet = setTimeout(() => { try { r.stop(); } catch {} }, pauseMs); };
   r.onresult = (e) => {
     let live = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) final += e.results[i][0].transcript; else live += e.results[i][0].transcript;
     }
     onInterim?.((final + ' ' + live).trim());
+    hush();
   };
   r.onerror = (e) => {
     if (e.error === 'not-allowed') onError?.('El navegador no dio permiso al micrófono.');
     else if (e.error === 'network') onError?.('El dictado del navegador necesita internet.');
     else if (e.error !== 'no-speech' && e.error !== 'aborted') onError?.(`Dictado: ${e.error}`);
   };
-  r.onend = () => onText?.(final.trim());
+  r.onend = () => { clearTimeout(quiet); onText?.(final.trim()); };
   try { r.start(); onState?.('listening'); } catch { onText?.(''); }
   return { stop: () => { try { r.stop(); } catch {} }, cancel: () => { try { r.abort(); } catch {} } };
 }

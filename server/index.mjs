@@ -208,7 +208,8 @@ async function localAct(tool, a) {
   return fleet.schedule(a.project, a.session, at, msg);
 }
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png',
-                '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' };
+                '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2',
+                '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.onnx': 'application/octet-stream' };
 function serveStatic(res, pathname) {
   if (!fs.existsSync(DIST)) {
     res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });

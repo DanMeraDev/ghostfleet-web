@@ -64,8 +64,16 @@ navegador. Se detectan solos:
 Las dos cosas de una vez, en el home y sin `sudo` (necesita git, cmake, un compilador de C++ y `uv`):
 `bash scripts/install-voice.sh`.
 
-El idioma de whisper es español (`GFW_VOICE_LANG` para cambiarlo). Grabar se corta solo tras 1,2 s
-de silencio.
+El idioma de whisper es español (`GFW_VOICE_LANG` para cambiarlo).
+
+**Cuándo terminaste de hablar** lo decide [Silero VAD](https://github.com/snakers4/silero-vad) en el
+navegador (vía [`@ricky0123/vad-web`](https://github.com/ricky0123/vad), el mismo detector que usa
+[Handy](https://github.com/cjpais/Handy)): reconoce voz humana en vez de medir volumen, así que una
+respiración, el teclado o un ventilador no cuentan como hablar, y una pausa para pensar no corta.
+Cada persona elige en el asistente *Cuando hago una pausa*: 2,5 s, 4,5 s, o no cortar nunca y esperar
+a *✓ Ya terminé*. Sus archivos (modelo, worklet y el wasm de onnxruntime, ~17 MB, se bajan una vez)
+los sirve este mismo servidor: `pnpm build` los copia con `scripts/copy-vad.mjs`. Si no cargan, queda
+un medidor de volumen como respaldo.
 
 **Si no hay voz local**, se usa la del navegador: el dictado funciona en Chrome y Edge (con internet,
 porque Chrome lo procesa en sus servidores) y la lectura con `speechSynthesis`.

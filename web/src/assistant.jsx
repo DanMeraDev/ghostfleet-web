@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'preact/hooks';
 import { STATUS, statusOf, Btn } from './ui.jsx';
-import { plainText, browserCanHear } from './voice.js';
+import { plainText, browserCanHear, PAUSES } from './voice.js';
 import { useAgent, talk, stop, submit, choose, setTarget, setOption, canHear, busy, unframe } from './agent.js';
 
 // ── the avatar: ghostfleet's own SHIP sprite (bin/fleet-grid.mjs), pixel for pixel ─────
@@ -83,7 +83,7 @@ export function Console({ projects, big }) {
         <button class={`mic${listening ? ' on' : ''}`} disabled={!canHear() || S.phase === 'hearing'} onClick={talk}
                 aria-label={listening ? 'Terminar de hablar' : 'Hablar'}>
           <span class="mic-ico">{S.phase === 'hearing' ? '…' : listening ? '✓' : '🎙'}</span>
-          <span>{S.phase === 'hearing' ? 'Transcribiendo…' : listening ? 'Te escucho — toca para terminar' : 'Hablar'}</span>
+          <span>{S.phase === 'hearing' ? 'Transcribiendo…' : listening ? (S.pause === 'manual' ? 'Te escucho — toca cuando termines' : 'Te escucho — habla tranquilo') : 'Hablar'}</span>
           {S.phase === 'listening' && local ? <span class="meter"><i style={{ width: `${Math.round(S.level * 100)}%` }} /></span> : null}
         </button>
         {active ? <button class="stop-all" onClick={stop} aria-label="Detener todo">■ Detener</button> : null}
@@ -101,6 +101,14 @@ export function Console({ projects, big }) {
           : 'Este navegador no trae dictado y no hay voz local instalada: escríbele.'}
         {S.vs?.speak?.ready ? ' Responde con la voz de Kokoro.' : ''}
       </p>
+      {S.phase === 'listening' ? <p class="listen-hint small">{S.pause === 'manual'
+        ? 'No te corto aunque hagas pausas. Toca ✓ cuando termines.'
+        : `Puedes pausar para pensar: envío cuando calles ${S.pause === 'larga' ? '4,5' : '2,5'} segundos, o toca ✓.`}</p> : null}
+      <label class="pause-pick small">Cuando hago una pausa:
+        <select value={S.pause} onChange={(e) => setOption('pause', e.currentTarget.value)}>
+          {Object.entries(PAUSES).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+        </select>
+      </label>
       <div class="toggles">
         <label><input type="checkbox" checked={S.voiceOut} onChange={(e) => setOption('voiceOut', e.currentTarget.checked)} /> Responder en voz alta</label>
         <label><input type="checkbox" checked={S.handsFree} onChange={(e) => setOption('handsFree', e.currentTarget.checked)} /> Conversación (vuelve a escucharte después de responder)</label>
