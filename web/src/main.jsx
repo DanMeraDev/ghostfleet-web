@@ -5,6 +5,7 @@ import { Setup, Login } from './auth.jsx';
 import { ProjectView } from './project.jsx';
 import { Home, Activity, Settings } from './views.jsx';
 import { Avatar, Logo, Toasts, usePoll, toast } from './ui.jsx';
+import { UsageMeter, UsageChips } from './usage.jsx';
 import { Assistant, Ship, VoiceBar } from './assistant.jsx';
 import { bind, unbind } from './agent.js';
 import { FleetMap } from './map.jsx';
@@ -25,7 +26,7 @@ function useRoute() {
   return r;
 }
 
-function Sidebar({ ctx, route, projects, open, onClose, onAssistant }) {
+function Sidebar({ ctx, route, projects, open, onClose, onAssistant, usage }) {
   const [q, setQ] = useState('');
   const list = (projects || [])
     .filter(p => !q || p.name.toLowerCase().includes(q.toLowerCase()))
@@ -53,6 +54,7 @@ function Sidebar({ ctx, route, projects, open, onClose, onAssistant }) {
           </>
         )))}
       </div>
+      <UsageMeter data={usage} />
       <div class="side-foot">
         <Avatar user={ctx.me} size={28} />
         <span class="grow ellipsis">{ctx.me.name}</span>
@@ -72,6 +74,7 @@ function Shell({ me, mode, onLogout }) {
   const loadUsers = useCallback(() => api.users().then(r => setUsers(r.users)).catch(() => {}), []);
   useEffect(() => { loadUsers(); }, []);
   const { data: pj } = usePoll(() => api.projects(), 4000, []);
+  const { data: usage } = usePoll(() => api.usage(), 15000, []);
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users]);
   const ctx = {
     me, mode, users, usersById,
@@ -95,10 +98,10 @@ function Shell({ me, mode, onLogout }) {
       <div class="topbar">
         <button class="icon-btn" aria-label="Menú" onClick={() => setMenu(true)}>☰</button>
         <div class="brand"><Logo size={22} /><b>ghostfleet</b></div>
-        {need ? <a class="badge bad" href="#/">{need}</a> : <span />}
+        <span class="topbar-end"><UsageChips data={usage} onClick={() => setMenu(true)} />{need ? <a class="badge bad" href="#/">{need}</a> : null}</span>
       </div>
       {menu ? <div class="side-scrim" onClick={() => setMenu(false)} /> : null}
-      <Sidebar ctx={ctx} route={route} projects={pj?.projects ?? null} open={menu} onClose={() => setMenu(false)} onAssistant={() => setAsOpen(true)} />
+      <Sidebar ctx={ctx} route={route} usage={usage} projects={pj?.projects ?? null} open={menu} onClose={() => setMenu(false)} onAssistant={() => setAsOpen(true)} />
       <main class="main">
         {mode === 'demo' ? <div class="demo-bar">Modo demo · datos de ejemplo, puedes tocar todo sin miedo</div> : null}
         {main}

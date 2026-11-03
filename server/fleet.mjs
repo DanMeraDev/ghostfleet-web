@@ -226,4 +226,40 @@ export function attach(project, session, name, buf) {
   return attachments.save(path.join(fleetDir(t), 'attach', `${t.sock}.${session}`), name, buf);
 }
 
+// ── usage: how much of each Claude account's 5-hour and weekly limit is gone ────────────
+// Claude Code reports both to the status line, and ghostfleet's status hook keeps the last
+// reading of every session in <cfg>/fleet/<session_id>.json (usage.limits.five_hour /
+// seven_day: pct, resets). One config dir per profile — but not one account forever: a
+// profile that was logged in to another account last week still has that account's files.
+// lib/accounts.mjs untangles that with its own state (off here); without it, the NEWEST
+// reading is the account in use now, and a session that is running keeps it fresh.
+const liveWin = (w, at, now) => w && typeof w.pct === 'number' && (w.resets ? w.resets > now : (at || 0) > now - 600);
+const current = (a, b) => (!a || !b) ? (a || b || null) : (b.at >= a.at ? b : a);
+function readUsage(cfg, profile, now) {
+  const dir = path.join(cfg, 'fleet');
+  const out = { profile: profile === 'default' ? 'work' : profile, five_hour: null, seven_day: null, at: 0 };
+  let names = []; try { names = fs.readdirSync(dir); } catch {}
+  for (const n of names) {
+    if (!n.endsWith('.json') || n.startsWith('.') || n === 'accounts.json') continue;
+    let u; try { u = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).usage; } catch { continue; }
+    if (!u?.limits || !u.at) continue;
+    for (const k of ['five_hour', 'seven_day']) {
+      const w = u.limits[k];
+      if (liveWin(w, u.at, now)) out[k] = current(out[k], { pct: Math.round(w.pct), resets: Number(w.resets) || 0, at: u.at });
+    }
+    out.at = Math.max(out.at, u.at);
+  }
+  return out;
+}
+let usageCache = { at: 0, v: null };
+export function usage() {
+  const now = Math.floor(Date.now() / 1000);
+  if (usageCache.v && now - usageCache.at < 10) return usageCache.v;
+  const byCfg = new Map();
+  for (const t of dispatch.projects()) if (!byCfg.has(t.cfg)) byCfg.set(t.cfg, t.profile);
+  const profiles = [...byCfg].map(([cfg, profile]) => readUsage(cfg, profile, now)).filter(p => p.five_hour || p.seven_day);
+  usageCache = { at: now, v: { ok: true, at: now, profiles } };
+  return usageCache.v;
+}
+
 export const mode = 'real';

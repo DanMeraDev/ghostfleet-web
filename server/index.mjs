@@ -339,6 +339,7 @@ async function route(req, res, url) {
   }
   if (p === '/api/activity') return send(res, 200, { rows: activity(Number(q(url, 'limit')) || 200) });
 
+  if (p === '/api/usage') return send(res, 200, fleet.usage());
   if (p === '/api/voice') return send(res, 200, voice.status());
   if (p === '/api/lead' && req.method === 'POST') {
     const b = await body(req);

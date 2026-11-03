@@ -254,5 +254,13 @@ export function attach(project, session, name, buf) {
   return attachments.save(path.join(os.tmpdir(), 'ghostfleet-web-demo', 'attach', `${project}.${session}`), name, buf);
 }
 
+export function usage() {
+  const t = now(), h = (x) => t - (t % 3600) + x * 3600;
+  return { ok: true, at: t, profiles: [
+    { profile: 'work', at: t, five_hour: { pct: 62, resets: h(2) }, seven_day: { pct: 48, resets: h(70) } },
+    { profile: 'personal', at: t - 1800, five_hour: { pct: 91, resets: h(1) }, seven_day: { pct: 23, resets: h(120) } },
+  ] };
+}
+
 export const reset = () => { for (const t of timers.values()) clearTimeout(t); timers.clear(); P = seed(); };
 export const mode = 'demo';
