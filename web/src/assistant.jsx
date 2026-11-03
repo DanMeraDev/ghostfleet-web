@@ -93,7 +93,9 @@ export function Console({ projects, big }) {
                placeholder={big ? 'Escríbele: “vamos a practiq, revisa los tests de pagos”…' : '…o escríbele aquí'} />
         <Btn kind="primary" type="submit" disabled={!typed.trim()}>Enviar</Btn>
       </form>
-      {S.pending || big ? <Picker projects={projects} title="O elige el proyecto con un clic" /> : null}
+      {S.pending ? <Picker projects={projects} title="O elige el proyecto con un clic" /> : null}
+      <details class="voice-opts">
+      <summary>⚙ Voz</summary>
       <p class="voice-src muted small">
         {S.vs == null ? 'Revisando la voz…'
           : local ? '🔒 Voz local: se transcribe en esta máquina, el audio no sale de aquí.'
@@ -114,6 +116,7 @@ export function Console({ projects, big }) {
         <label><input type="checkbox" checked={S.handsFree} onChange={(e) => setOption('handsFree', e.currentTarget.checked)} /> Conversación (vuelve a escucharte después de responder)</label>
         <label><input type="checkbox" checked={S.follow} onChange={(e) => setOption('follow', e.currentTarget.checked)} /> Llevarme a la sesión donde está trabajando</label>
       </div>
+      </details>
     </div>
   );
 }
@@ -206,7 +209,6 @@ export function HomeAgent({ ctx, projects }) {
         <Ship size={54} state={shipStateOf(S)} />
         <div>
           <h2>¿Qué hacemos hoy?</h2>
-          <p class="muted">Dímelo o escríbelo. Por ejemplo: “vámonos a vault invers, me pidieron revisar el KPI de Belgrano”.</p>
         </div>
       </div>
       <Console projects={projects} big />
