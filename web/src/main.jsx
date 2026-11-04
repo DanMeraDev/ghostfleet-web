@@ -7,7 +7,8 @@ import { Home, Activity, Settings } from './views.jsx';
 import { Avatar, Logo, Toasts, usePoll, toast } from './ui.jsx';
 import { UsageMeter, UsageChips } from './usage.jsx';
 import { Assistant, Ship, VoiceBar } from './assistant.jsx';
-import { bind, unbind } from './agent.js';
+import { bind, unbind, useAgent } from './agent.js';
+import { TaskRail, TaskChip } from './tasks.jsx';
 import { FleetMap } from './map.jsx';
 import { Automations, noticesSeen } from './automations.jsx';
 import './styles.css';
@@ -73,6 +74,11 @@ function Shell({ me, mode, onLogout }) {
   const [users, setUsers] = useState([me]);
   const [menu, setMenu] = useState(false);
   const [asOpen, setAsOpen] = useState(() => { try { return localStorage.getItem('gfw.asOpen') === '1'; } catch { return false; } });
+  const [railOpen, setRailOpen] = useState(() => { try { return (localStorage.getItem('gfw.rail') ?? (innerWidth > 900 ? '1' : '0')) === '1'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('gfw.rail', railOpen ? '1' : '0'); } catch {} }, [railOpen]);
+  const S = useAgent();
+  const asked = S.tasks.some(t => !t.hidden) || S.deciding.length > 0;
+  const rail = asked && railOpen;
   useEffect(() => { try { localStorage.setItem('gfw.asOpen', asOpen ? '1' : '0'); } catch {} }, [asOpen]);
   const loadUsers = useCallback(() => api.users().then(r => setUsers(r.users)).catch(() => {}), []);
   useEffect(() => { loadUsers(); }, []);
@@ -108,7 +114,7 @@ function Shell({ me, mode, onLogout }) {
   else main = <Home ctx={ctx} projects={pj?.projects ?? null} />;
 
   return (
-    <div class={`app${mode === 'demo' ? ' is-demo' : ''}${asOpen ? ' with-as' : ''}`}>
+    <div class={`app${mode === 'demo' ? ' is-demo' : ''}${asOpen ? ' with-as' : ''}${rail ? ' with-rail' : ''}`}>
       <div class="topbar">
         <button class="icon-btn" aria-label="Menú" onClick={() => setMenu(true)}>☰</button>
         <div class="brand"><Logo size={22} /><b>ghostfleet</b></div>
@@ -120,9 +126,10 @@ function Shell({ me, mode, onLogout }) {
         {mode === 'demo' ? <div class="demo-bar">Modo demo · datos de ejemplo, puedes tocar todo sin miedo</div> : null}
         {main}
       </main>
+      {rail ? <TaskRail ctx={ctx} projects={pj?.projects ?? null} onClose={() => setRailOpen(false)} /> : null}
       {asOpen
-        ? <Assistant ctx={ctx} route={route} projects={pj?.projects ?? null} onClose={() => setAsOpen(false)} />
-        : <><VoiceBar onOpen={() => setAsOpen(true)} />
+        ? <Assistant ctx={ctx} route={route} projects={pj?.projects ?? null} onClose={() => setAsOpen(false)} chip={asked && !rail ? <TaskChip onClick={() => setRailOpen(true)} /> : null} />
+        : <>{asked && !rail ? <TaskChip floating onClick={() => setRailOpen(true)} /> : null}<VoiceBar onOpen={() => setAsOpen(true)} />
             <button class="as-launch" onClick={() => setAsOpen(true)} aria-label="Abrir el asistente de voz"><Ship size={34} /> <span>Asistente</span></button></>}
       <Toasts />
     </div>

@@ -51,6 +51,9 @@ const HOSTS = new Set(['127.0.0.1', 'localhost', '::1', hostName(BIND),
 
 const fleet = MODE === 'demo' ? await import('./demo.mjs') : await import('./fleet.mjs');
 const voice = await import('./voice.mjs');
+const piper = await import('./piper.mjs');
+const router = await import('./router.mjs');
+const { createTasks } = await import('./tasks.mjs');
 
 // ── small persistence helpers ───────────────────────────────────────────────────────────
 const now = () => Math.floor(Date.now() / 1000);
@@ -367,11 +370,51 @@ async function route(req, res, url) {
 
   if (p === '/api/usage') return send(res, 200, fleet.usage());
   if (p === '/api/voice') return send(res, 200, voice.status());
+  if (p === '/api/voices') return send(res, 200, voice.voices());
+  if ((p === '/api/voices/install' || p === '/api/voices/delete') && req.method === 'POST') {
+    const b = await body(req);
+    const del = p.endsWith('delete');
+    const r = del ? piper.remove(String(b.key || '')) : piper.install(String(b.key || ''));
+    if (r.error) throw httpErr(400, r.error);
+    audit({ user: me.id, verb: del ? 'voice_delete' : 'voice_install', subject: String(b.key), result: 'ran' });
+    return send(res, 200, { ok: true });
+  }
   if (p === '/api/lead' && req.method === 'POST') {
     const b = await body(req);
     const r = await fleet.ensureLead(String(b.project || ''));
     if (r.started) audit({ user: me.id, verb: `lead_${r.started}`, project: b.project, subject: 'master', result: r.ok ? 'ran' : 'refused', output: r.text || '' });
     return send(res, r.ok ? 200 : 502, r);
+  }
+  // What was said to the assistant: split into tasks and given a place. Sent by the page, one by
+  // one, like any other send; tasks.mjs follows them from there.
+  if (p === '/api/route' && req.method === 'POST') {
+    const b = await body(req);
+    const text = String(b.text || '').trim();
+    if (!text) throw httpErr(400, 'no hay nada que mandar');
+    let notes = '';
+    try { notes = fs.readFileSync(file('router-notes.md'), 'utf8').slice(0, 4000).trim(); } catch {}
+    const r = await router.route({ text, feed: Array.isArray(b.feed) ? b.feed : [], open: tasks.open(me.id), page: b.page, projects: await fleet.projects(), notes });
+    if (r.action === 'tasks') r.tasks = r.tasks.map(t => (t.pending && t.project ? tasks.settle(me.id, t.pending, t) : tasks.add(me.id, { ...t, voice: b.voice })) || t);
+    for (const t of r.tasks || [{ ...r }])
+      audit({ user: me.id, verb: 'route', project: t.project, subject: t.session || (t.project ? 'master' : ''), result: t.project ? r.action : 'ask',
+              output: `${t.title ? `${t.title} · ` : ''}${t.why || r.why || ''}`.slice(0, 200), args: { text: text.slice(0, 300) } });
+    return send(res, 200, r);
+  }
+  if (p === '/api/tasks') return send(res, 200, { tasks: tasks.open(me.id) });
+  if (p === '/api/tasks/sent' && req.method === 'POST') {
+    const b = await body(req);
+    return send(res, 200, { ok: !!tasks.sent(me.id, String(b.id), b) });
+  }
+  if (p === '/api/tasks/place' && req.method === 'POST') {
+    const b = await body(req);
+    const t = tasks.settle(me.id, String(b.id), { project: String(b.project || '') });
+    if (!t) throw httpErr(404, 'esa tarea ya no está');
+    return send(res, 200, t);
+  }
+  if (p === '/api/tasks/done' && req.method === 'POST') {
+    const b = await body(req);
+    tasks.done(me.id, b.id ? String(b.id) : '');
+    return send(res, 200, { ok: true });
   }
   if (p === '/api/hear' && req.method === 'POST') {
     const wav = await rawBody(req, 8 * 1048576);
@@ -396,7 +439,7 @@ async function route(req, res, url) {
   }
   if (p === '/api/speak' && req.method === 'POST') {
     const b = await body(req);
-    const r = voice.plan(b.text, b.more === true);
+    const r = voice.plan(b.text, b.more === true, b.voice);
     return r.error ? send(res, 503, { ok: false, text: r.error }) : send(res, 200, { ok: true, ...r });
   }
   if (p.startsWith('/api/speak/') && req.method === 'GET') {
@@ -448,6 +491,8 @@ async function route(req, res, url) {
 }
 
 // Automations run as the person who made them, through perform() like any click.
+const tasks = createTasks({ fleet, readJson, writeJson });
+tasks.start();
 const autos = createEngine({ fleet, readJson, writeJson, appendLine, readLines, perform, users: () => users });
 autos.start();
 

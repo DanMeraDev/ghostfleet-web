@@ -56,11 +56,19 @@ Para desarrollo con recarga en caliente: `pnpm dev:demo` o `pnpm dev`, y abre <h
     no queda abierto gastando memoria.
 - **Responsable y presencia**: cada sesión tiene un dueño, y se ve cuando el otro está mirando o escribiendo.
 - **Actividad**: todo lo que se hizo, con nombre y hora.
-- **Asistente de voz**: le hablas al líder (`master`) del proyecto, o a Jarvis si está activado, y él
-  reparte el trabajo en sesiones. El barco navega a la sesión donde está trabajando y, con
+- **Asistente de voz**: todo lo que le dices pasa primero por un despachador (`server/router.mjs`, un
+  `claude -p` de una sola vuelta que ve la conversación reciente y la flota), que separa lo dicho en tareas
+  y le da a cada una **un solo destino**: el líder de un proyecto o una sesión nombrada. Si no está seguro,
+  o si algo falla, la tarea queda anotada preguntando a dónde va, sin mandarse. Cada decisión queda en
+  *Actividad* con su motivo. Lo que no sale de los nombres
+  se le explica en `<datos>/router-notes.md` (qué proyecto lleva qué). El barco navega a la sesión donde está trabajando y, con
   *Seguirlo en vivo*, la pantalla va con él. Responde en voz alta y tiene modo manos libres.
-  Además entiende órdenes para moverse, sin gastar Claude: “ve a vault-invers”, “abre la sesión
-  stripe”, “muéstrame el mapa”, “habla con el líder de cotizador” (tolera errores de transcripción).
+  Órdenes que solo mueven la página no pasan por Claude: “muéstrame el mapa”, “abre la sesión stripe”.
+- **Pedidos** (la lista al costado, en cualquier página): cada tarea pedida al asistente con su proyecto y
+  su estado (*¿a dónde?, enviada, trabajando, te necesita, respondió*) y lo que le contestaron. Se guarda
+  en el servidor, por persona (`tasks.json`), y sigue las respuestas de todos los proyectos a la vez; cada
+  respuesta se lee diciendo de dónde viene, una después de otra. Una tarea sale de la lista cuando la
+  marcas con ✓. Los comentarios sueltos (“perfecto”) se mandan pero no ocupan lugar.
 - **Mapa en vivo**: todos los proyectos como islas y sus sesiones como barcos del color de su estado;
   el barco fantasma vuela a donde acaba de pasar algo, en cualquier proyecto, con un registro en vivo.
 - **Etiquetas y mensajes programados**: “🏷 urgente cliente”, o “escríbele *continúa* mañana a las 9”.
@@ -92,6 +100,12 @@ Cada persona elige en el asistente *Cuando hago una pausa*: 2,5 s, 4,5 s, o no c
 a *✓ Ya terminé*. Sus archivos (modelo, worklet y el wasm de onnxruntime, ~17 MB, se bajan una vez)
 los sirve este mismo servidor: `pnpm build` los copia con `scripts/copy-vad.mjs`. Si no cargan, queda
 un medidor de volumen como respaldo.
+
+**Voces para elegir**, en *⚙ Voz* del asistente: las tres en español de Kokoro y, de internet, las de
+[Piper](https://huggingface.co/rhasspy/piper-voices). Esas se escuchan antes y se bajan con un clic
+(~60 MB cada una; la primera también instala `piper-tts` en `~/.local/share/piper` con `uv`, y cada
+archivo se verifica contra el catálogo). Quedan para todos; cada navegador recuerda la suya. Solo cambian
+las frases en español: las que están en inglés las sigue leyendo Kokoro.
 
 **Si no hay voz local**, se usa la del navegador: el dictado funciona en Chrome y Edge (con internet,
 porque Chrome lo procesa en sus servidores) y la lectura con `speechSynthesis`.

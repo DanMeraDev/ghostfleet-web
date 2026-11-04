@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'preact/hooks';
 import { STATUS, statusOf, Btn } from './ui.jsx';
 import { plainText, browserCanHear, PAUSES } from './voice.js';
-import { useAgent, talk, stop, submit, choose, setTarget, setOption, canHear, busy, unframe } from './agent.js';
+import { useAgent, talk, stop, submit, setTarget, setOption, canHear, busy, unframe } from './agent.js';
+import { VoicePicker } from './voices.jsx';
 
 // ── the avatar: ghostfleet's own SHIP sprite (bin/fleet-grid.mjs), pixel for pixel ─────
 // Half-blocks carry two pixel rows per text row: ▀ the top one, ▄ the bottom, █ both.
@@ -33,11 +34,11 @@ export function Ship({ size = 64, state = 'idle', title }) {
   );
 }
 
-const STATE_WORDS = { listening: 'Te escucho…', hearing: 'Transcribiendo…', sending: 'Enviando…', starting: 'Despertando al líder…',
+const STATE_WORDS = { listening: 'Te escucho…', hearing: 'Transcribiendo…', routing: 'Viendo a dónde va…', sending: 'Enviando…', starting: 'Despertando al líder…',
                       thinking: 'Pensando…', acting: 'Trabajando', speaking: 'Hablando', idle: 'Listo', off: 'Sin líder abierto' };
 
 export function shipStateOf(S) {
-  if (['listening', 'hearing', 'sending', 'starting', 'speaking'].includes(S.phase)) return S.phase;
+  if (['listening', 'hearing', 'routing', 'sending', 'starting', 'speaking'].includes(S.phase)) return S.phase;
   const master = S.cards.find(c => c.lead);
   if (!master) return 'off';
   const st = statusOf(master);
@@ -51,29 +52,10 @@ export function rankedProjects(projects) {
   return [...(projects || [])].sort((a, b) => (b.counts.need_you - a.counts.need_you) || (last(b) - last(a)) || a.name.localeCompare(b.name));
 }
 
-function Picker({ projects, title }) {
-  const S = useAgent();
-  const [all, setAll] = useState(false);
-  const list = rankedProjects(projects);
-  const shown = all ? list : list.slice(0, 8);
-  return (
-    <div class={`picker${S.pending ? ' asking' : ''}`}>
-      <span class="picker-title">{S.pending ? '¿Para qué proyecto es?' : title}</span>
-      <div class="picker-chips">
-        {shown.map(p => (
-          <button key={p.name} class={`pchip${p.name === S.target ? ' on' : ''}`} onClick={() => choose(p.name)}>
-            <span class={`dot${p.counts.need_you ? ' bad' : p.counts.working ? ' work' : p.sessions.length ? ' on' : ''}`} />{p.name}
-          </button>
-        ))}
-        {list.length > 8 ? <button class="pchip more" onClick={() => setAll(a => !a)}>{all ? 'menos' : `+${list.length - 8} más`}</button> : null}
-      </div>
-    </div>
-  );
-}
-
 export function Console({ projects, big }) {
   const S = useAgent();
   const [typed, setTyped] = useState('');
+  const [choosing, setChoosing] = useState(false);
   const listening = S.phase === 'listening' || S.phase === 'hearing';
   const active = busy() || listening;
   const local = !!S.vs?.hear?.ready;
@@ -93,15 +75,15 @@ export function Console({ projects, big }) {
                placeholder={big ? 'Escríbele: “vamos a practiq, revisa los tests de pagos”…' : '…o escríbele aquí'} />
         <Btn kind="primary" type="submit" disabled={!typed.trim()}>Enviar</Btn>
       </form>
-      {S.pending ? <Picker projects={projects} title="O elige el proyecto con un clic" /> : null}
+      <Btn kind="sm voice-choose" aria-expanded={choosing} onClick={() => setChoosing(!choosing)}>{choosing ? 'Cerrar voces' : 'Elegir voz'}</Btn>
+      {choosing ? <VoicePicker /> : null}
       <details class="voice-opts">
-      <summary>⚙ Voz</summary>
+      <summary>⚙ Opciones de voz</summary>
       <p class="voice-src muted small">
         {S.vs == null ? 'Revisando la voz…'
           : local ? '🔒 Voz local: se transcribe en esta máquina, el audio no sale de aquí.'
           : browserCanHear ? 'Voz del navegador (Chrome la procesa en sus servidores).'
           : 'Este navegador no trae dictado y no hay voz local instalada: escríbele.'}
-        {S.vs?.speak?.ready ? ' Responde con la voz de Kokoro.' : ''}
       </p>
       {S.phase === 'listening' ? <p class="listen-hint small">{S.pause === 'manual'
         ? 'No te corto aunque hagas pausas. Toca ✓ cuando termines.'
@@ -133,7 +115,7 @@ export function Feed({ ctx, limit, empty }) {
         <div key={e.id} class={`as-row ${e.kind}${e.bad ? ' bad' : ''}${e.ask ? ' ask-row' : ''}`}
              onClick={e.session && e.project ? () => ctx.go(`/p/${encodeURIComponent(e.project)}/s/${encodeURIComponent(e.session)}`) : undefined}>
           {e.kind === 'me' ? <><span class="tag-me">{e.voice ? '🎙 tú' : 'tú'}</span> {unframe(e.text)}</>
-            : e.kind === 'ai' ? <><span class="tag-ai">líder</span> {plainText(e.text)}</>
+            : e.kind === 'ai' ? <><span class="tag-ai">{e.project || 'líder'}</span>{e.title ? <em class="tag-about"> {e.title}</em> : null} {plainText(e.text)}</>
             : <><span class="tag-ev">{e.ask ? 'pregunta' : 'en vivo'}</span> {e.text}</>}
         </div>
       ))}
@@ -174,18 +156,18 @@ const HINT = (
   <div class="as-hint">
     <p><b>Háblale como a un compañero.</b></p>
     <p class="muted">“Vamos a practiq” · “En vault invers revisa el KPI de Belgrano” · “Abre la sesión stripe” · “Muéstrame el mapa”.</p>
-    <p class="muted">Primero entiendo a qué proyecto te refieres; si no lo dices, te pregunto. El pedido se lo paso al líder de ese proyecto, que reparte el trabajo.</p>
+    <p class="muted">Todo pasa primero por quien reparte: mira la conversación y decide un solo destino. Si no está seguro, te pregunta antes de mandar.</p>
   </div>
 );
 
-export function Assistant({ ctx, projects, onClose }) {
+export function Assistant({ ctx, projects, onClose, chip }) {
   const S = useAgent();
   const list = useMemo(() => rankedProjects(projects), [projects]);
   return (
     <aside class="assistant" aria-label="Asistente">
       <header class="as-head">
-        <div><b>Asistente</b><small>entiende el proyecto y se lo pasa a su líder</small></div>
-        <button class="x" aria-label="Cerrar asistente" onClick={onClose}>✕</button>
+        <div><b>Asistente</b><small>decide a dónde va cada cosa y, si duda, te pregunta</small></div>
+        <span class="as-head-end">{chip}<button class="x" aria-label="Cerrar asistente" onClick={onClose}>✕</button></span>
       </header>
       <label class="field as-target"><span>Le hablas al líder de</span>
         <select value={S.target} onChange={(e) => setTarget(e.currentTarget.value)}>
@@ -223,7 +205,7 @@ export function HomeAgent({ ctx, projects }) {
 export function VoiceBar({ onOpen }) {
   const S = useAgent();
   const state = shipStateOf(S);
-  const live = ['listening', 'hearing', 'sending', 'starting', 'speaking'].includes(S.phase) || S.conversing;
+  const live = ['listening', 'hearing', 'routing', 'sending', 'starting', 'speaking'].includes(S.phase) || S.conversing;
   if (!live) return null;
   return (
     <div class={`voicebar st-${state}`} role="status">

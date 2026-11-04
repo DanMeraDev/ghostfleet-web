@@ -19,6 +19,7 @@ const VERBS = {
   fleet_spawn: 'creó la sesión', fleet_stop: 'detuvo', fleet_rename: 'renombró', fleet_worktree_remove: 'borró el worktree',
   fleet_unqueue: 'sacó de la cola un mensaje de', assign: 'cambió el responsable de', login: 'entró', setup: 'creó las cuentas',
   add_user: 'agregó a', password: 'cambió su contraseña', auto_save: 'guardó la automatización', auto_delete: 'borró la automatización',
+  route: 'el asistente decidió sobre', voice_install: 'descargó la voz', voice_delete: 'borró la voz',
 };
 const RESULT = { ran: ['hecho', 'good'], refused: ['rechazado', 'bad'], changed: ['el pedido cambió', 'warn'] };
 

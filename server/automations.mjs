@@ -7,7 +7,7 @@
 // as skipped and its owner gets a notice. Work that lands hours after it was meant to is the
 // surprise this avoids.
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { claudeJson } from './claude.mjs';
 import { ACTIONS, EVENTS, STATES, normalize, nextAfter, describeTrigger, describeStep, fill } from '../shared/automations.js';
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -232,7 +232,7 @@ const DRAFT_SCHEMA = {
   required: ['reply', 'automation'],
 };
 
-export function askAI({ messages, draft, projects, nowText }) {
+export async function askAI({ messages, draft, projects, nowText }) {
   const fleetText = projects.map(p => `- ${p.name}: ${p.sessions.map(s => `${s.name}${s.lead ? ' (líder)' : ''} [${s.status}]`).join(', ') || 'sin sesiones'}`).join('\n');
   const system = `Eres el asistente que arma AUTOMATIZACIONES en ghostfleet web, una página para manejar una flota de sesiones de Claude Code (workers) organizadas por proyecto. Cada proyecto tiene un líder llamado normalmente "master" y workers con nombre.
 
@@ -262,30 +262,12 @@ La flota ahora:
 ${fleetText || '(no se pudo leer)'}`;
   const convo = messages.slice(-12).map(m => `${m.role === 'user' ? 'PERSONA' : 'ASISTENTE'}: ${String(m.text).slice(0, 2000)}`).join('\n\n');
   const prompt = `${draft ? `Borrador actual en el editor:\n${JSON.stringify(draft)}\n\n` : ''}Conversación:\n${convo}\n\nResponde al último mensaje de la PERSONA.`;
-  return new Promise((resolve) => {
-    const child = spawn('claude', ['-p', '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--no-session-persistence',
-      '--output-format', 'json', '--model', 'sonnet', '--system-prompt', system, '--json-schema', JSON.stringify(DRAFT_SCHEMA), prompt],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TMUX: '' } });
-    let out = '', err = '';
-    const kill = setTimeout(() => child.kill('SIGTERM'), 120000);
-    child.stdout.on('data', d => { out += d; });
-    child.stderr.on('data', d => { err += d; });
-    child.on('error', e => { clearTimeout(kill); resolve({ ok: false, text: `no pude abrir claude: ${e.message}` }); });
-    child.on('close', () => {
-      clearTimeout(kill);
-      try {
-        const j = JSON.parse(out);
-        const o = j.structured_output || JSON.parse(j.result);
-        if (j.is_error) return resolve({ ok: false, text: String(j.result || 'la IA devolvió un error').slice(0, 300) });
-        let automation = null, problem = '';
-        if (o.automation) {
-          try { automation = normalize(o.automation, { strict: false }); delete automation.id; }
-          catch (e) { problem = e.message; }
-        }
-        resolve({ ok: true, reply: problem ? `${o.reply}\n\n(El borrador vino con un problema: ${problem})` : o.reply, automation });
-      } catch {
-        resolve({ ok: false, text: (err || out || 'la IA no respondió').trim().split('\n').slice(-1)[0].slice(0, 300) });
-      }
-    });
-  });
+  const r = await claudeJson({ system, prompt, schema: DRAFT_SCHEMA });
+  if (!r.ok) return r;
+  let automation = null, problem = '';
+  if (r.data.automation) {
+    try { automation = normalize(r.data.automation, { strict: false }); delete automation.id; }
+    catch (e) { problem = e.message; }
+  }
+  return { ok: true, reply: problem ? `${r.data.reply}\n\n(El borrador vino con un problema: ${problem})` : r.data.reply, automation };
 }

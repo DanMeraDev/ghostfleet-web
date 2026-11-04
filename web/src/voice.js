@@ -227,7 +227,16 @@ function speakBrowser(text, onEnd) {
   u.onend = () => onEnd?.(); u.onerror = () => onEnd?.();
   s.speak(u);
 }
-export async function speak(md, onEnd) {
+// A voice sample from the internet: one file, played through the same stop as everything else.
+export function playSample(url, onEnd) {
+  stopSpeaking();
+  const job = { cancelled: false, audio: new Audio(url) };
+  playing = job;
+  const done = () => { if (!job.cancelled) { playing = null; onEnd?.(); } };
+  job.audio.onended = done; job.audio.onerror = done;
+  job.audio.play().catch(done);
+}
+export async function speak(md, onEnd, voice = '') {
   stopSpeaking();
   const text = plainText(md).slice(0, 1500);
   if (!text) { onEnd?.(); return; }
@@ -236,7 +245,7 @@ export async function speak(md, onEnd) {
   const job = { cancelled: false, audio: null };
   playing = job;
   try {
-    const r = await api.speak(text);
+    const r = await api.speak(text, voice);
     if (job.cancelled) return;
     for (const s of r.sentences) {
       if (job.cancelled) return;

@@ -1,5 +1,6 @@
 // server/voice.mjs — hearing and speaking on THIS machine, through ghostfleet's own code:
-// lib/jarvis.mjs runs whisper.cpp, lib/speech.mjs runs Kokoro. Both are optional and found
+// lib/jarvis.mjs runs whisper.cpp, lib/speech.mjs runs Kokoro, server/piper.mjs adds the voices
+// that can be downloaded. The first two are optional and found
 // rather than configured; when either is missing the browser falls back to its own voice.
 // Nothing spoken is kept: whisper's input lives in a temp dir that is removed before the
 // transcript returns, and the log line carries sizes and times, never words.
@@ -7,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GF_HOME } from './paths.mjs';
+import * as piper from './piper.mjs';
 
 const load = async (rel) => {
   const p = path.join(GF_HOME, rel);
@@ -36,17 +38,37 @@ export function hear(wav, words = []) {
   return p;
 }
 
+// The voices that answer in Spanish: Kokoro's own three, and whatever was downloaded from Piper.
+// A voice is 'kokoro:<name>' or 'piper:<key>'. Only Spanish sentences change voice: an English
+// one read by a Spanish voice sounds wrong, so those stay with Kokoro's English voice.
+const KOKORO_ES = [{ id: 'ef_dora', name: 'Dora', who: 'mujer' }, { id: 'em_alex', name: 'Alex', who: 'hombre' }, { id: 'em_santa', name: 'Santa', who: 'hombre' }];
+export function voices() {
+  const def = speech?.VOICES.es.voice;
+  return { kokoro: KOKORO_ES.map(v => ({ ...v, id: `kokoro:${v.id}`, default: v.id === def })), ...piper.list() };
+}
+function revoice(it, choice) {
+  if (it.lang !== 'es' || !choice) return it;
+  const [engine, name] = String(choice).split(':');
+  if (engine === 'kokoro' && KOKORO_ES.some(v => v.id === name)) {
+    const v = { voice: name, lang: it.code };
+    return { ...it, id: speech.idFor(it.text, v), voice: name };
+  }
+  if (engine === 'piper' && piper.installed(name)) return { ...it, id: piper.idFor(name, it.text), voice: name, piper: name };
+  return it;
+}
+
 const speakLog = (m) => console.log(new Date().toISOString().slice(11, 19), 'speak:', m);
-export function plan(text, more = false) {
+export function plan(text, more = false, choice = '') {
   if (!speech) return { error: 'ghostfleet no está instalado' };
-  const items = speech.plan(String(text || '').slice(0, 8000));
+  const items = speech.plan(String(text || '').slice(0, 8000)).map(it => revoice(it, choice));
   if (!items.length) return { error: 'no hay nada que leer' };
-  speech.prefetch(items, speakLog, { append: more });
+  speech.prefetch(items.filter(it => !it.piper), speakLog, { append: more });
+  piper.prefetch(items.filter(it => it.piper).map(it => ({ id: it.id, text: it.text, key: it.piper })), { append: more });
   return { sentences: items.map(({ id, lang, voice, text: t }) => ({ id, lang, voice, text: t })) };
 }
 export async function audio(id) {
   if (!speech || !speech.validId(id)) return { status: 400, error: 'id de frase inválido' };
-  const pending = speech.audio(id, speakLog);
+  const pending = piper.owns(id) ? piper.audio(id).then(p => ({ path: p })) : speech.audio(id, speakLog);
   if (!pending) return { status: 404, error: 'frase desconocida' };
   let r;
   try { r = await pending; } catch (e) { return { status: 503, error: String(e?.message || e) }; }

@@ -10,7 +10,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { api } from './api.js';
 import { STATUS, statusOf } from './ui.jsx';
 import { voiceStatus, listenLocal, listenBrowser, browserCanHear, speak, stopSpeaking, warmVad, PAUSES } from './voice.js';
-import { resolve } from './resolve.js';
+import { command } from './resolve.js';
 
 const store = {
   get: (k, d) => { try { const v = localStorage.getItem(`gfw.${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -21,12 +21,14 @@ export const S = {
   target: store.get('target', ''),      // the project whose lead is being talked to
   targetAt: 0,                          // when it was last chosen, explicitly
   feed: [],
-  phase: 'idle',                        // listening | hearing | sending | starting | speaking | idle
+  phase: 'idle',                        // listening | hearing | routing | sending | starting | speaking | idle
   level: 0, interim: '',
   cards: [], focus: 'master',
-  pending: null,                        // work said before saying where
+  tasks: [],                            // what has been asked and not ticked off (server/tasks.mjs)
+  deciding: [],                         // said, and on its way through the dispatcher
   conversing: false,
   voiceOut: store.get('voiceOut', true),
+  voice: store.get('voice', ''),        // who answers: 'kokoro:<name>' or 'piper:<key>', '' = the default
   handsFree: store.get('handsFree', false),
   follow: store.get('follow', true),
   pause: PAUSES[store.get('pause', 'normal')] ? store.get('pause', 'normal') : 'normal',   // key of PAUSES
@@ -120,7 +122,7 @@ function say(text, then) {
   if (!S.voiceOut) { then?.(); return; }
   const my = gen;
   set({ phase: 'speaking' });
-  speak(text, () => { if (my !== gen) return; if (S.phase === 'speaking') set({ phase: 'idle' }); then?.(); });
+  speak(text, () => { if (my !== gen) return; if (S.phase === 'speaking') set({ phase: 'idle' }); then?.(); }, S.voice);
 }
 
 // ── understanding ───────────────────────────────────────────────────────────────────────
@@ -131,75 +133,161 @@ export function submit(text, voice = false) {
   const t = String(text || '').trim();
   if (t) heard(t, voice);
 }
-export function choose(project) {           // a project tapped in the list
-  setTarget(project);
-  if (S.pending) { const p = S.pending; set({ pending: null }); deliver(project, p.text, p.voice); return; }
-  go(`/p/${encodeURIComponent(project)}`);
-  push({ kind: 'event', text: `Le hablas al líder de ${project}.` });
+// A task that was waiting for a place, and the place tapped for it.
+export async function place(task, project) {
+  try {
+    const t = await api.taskPlace(task.id, project);
+    setTarget(project);
+    const who = await deliver(t);
+    say(who ? `Listo, se lo pasé ${who}.` : `No llegó a ${project}.`, again);
+  } catch (e) { push({ kind: 'event', text: `No llegó: ${e.message}`, bad: true }); }
+  pollTasks();
 }
+export function tickOff(id) { set({ tasks: S.tasks.filter(t => (id ? t.id !== id : t.status !== 'replied')) }); api.taskDone(id).catch(() => {}); }
+
+// One decision at a time, in the order things were said: each one has to see where the last went.
+let line = Promise.resolve();
+let lastSaid = { text: '', at: 0 };
 
 function heard(text, voice) {
   push({ kind: 'me', text, voice });
-  const r = resolve(text, projects(), context());
-  if (!r) return;
-  if (r.kind === 'go') {
-    if (r.go) go(r.go);
-    if (r.project) setTarget(r.project, false);
-    if (r.session) set({ focus: r.session });
-    push({ kind: 'event', text: r.say });
-    say(r.say, again);
+  const c = command(text, projects(), context());
+  if (c) {
+    if (c.go) go(c.go);
+    if (c.project) setTarget(c.project, false);
+    if (c.session) set({ focus: c.session });
+    push({ kind: 'event', text: c.say });
+    say(c.say, again);
     return;
   }
-  if (r.kind === 'place') {
-    setTarget(r.project);
-    go(`/p/${encodeURIComponent(r.project)}`);
-    if (S.pending) { const p = S.pending; set({ pending: null }); deliver(r.project, p.text, p.voice); return; }
-    push({ kind: 'event', text: r.say });
-    say(r.say, again);
+  if (text === lastSaid.text && Date.now() - lastSaid.at < 20000) {
+    push({ kind: 'event', text: 'Eso ya lo recibí, no lo mando dos veces.' });
     return;
   }
-  if (r.kind === 'ask') {
-    set({ pending: { text, voice } });
-    push({ kind: 'event', text: r.say, ask: true });
-    say(r.say, again);
-    return;
-  }
-  setTarget(r.project);
-  deliver(r.project, text, voice);
+  lastSaid = { text, at: Date.now() };
+  const row = { id: Math.random(), text };
+  set({ deciding: [...S.deciding, row] });
+  line = line.then(() => decide(text, voice)).catch(() => {}).then(() => set({ deciding: S.deciding.filter(d => d !== row) }));
 }
 
-async function deliver(project, text, voice) {
-  if (!ctx?.route?.session || ctx.route.project !== project) go(`/p/${encodeURIComponent(project)}`);
-  push({ kind: 'event', text: `Se lo paso al líder de ${project}.` });
-  set({ phase: 'starting', focus: 'master' });
-  let lead = 'master';
-  try {
-    const l = await api.lead(project);
-    if (l.started) push({ kind: 'event', text: l.started === 'start' ? `Arranqué el líder de ${project}.` : `Desperté al líder de ${project}.` });
-    lead = l.lead || 'master';
-  } catch (e) {
+const spokenName = (p) => String(p).replace(/[-_]+/g, ' ');
+const inWords = (l) => (l.length < 2 ? l.join('') : `${l.slice(0, -1).join(', ')} y ${l[l.length - 1]}`);
+
+async function decide(text, voice) {
+  const my = gen;
+  set({ phase: 'routing' });
+  const page = { project: ctx?.route?.project || '', session: ctx?.route?.session || '' };
+  const feed = S.feed.slice(0, -1).map(({ kind, text: t }) => ({ kind, text: unframe(t) }));
+  let r;
+  try { r = await api.route({ text, feed, page, voice }); }
+  catch (e) {
     set({ phase: 'idle' });
-    push({ kind: 'event', text: `No pude arrancar el líder de ${project}: ${e.message}`, bad: true });
-    say(`No pude arrancar el líder de ${project}.`, again);
+    push({ kind: 'event', text: `No pude decidir a dónde va “${text}”: ${e.message}. Dímelo de nuevo.`, bad: true });
+    say('No pude decidir a dónde va. Dímelo de nuevo.', again);
     return;
+  }
+  if (my !== gen) { pollTasks(); return; }
+  set({ phase: 'idle' });
+  if (r.action === 'ask') {
+    push({ kind: 'event', text: r.question, ask: true });
+    say(r.question, again);
+    return;
+  }
+  if (r.action === 'go') {
+    setTarget(r.project);
+    go(`/p/${encodeURIComponent(r.project)}${r.session ? `/s/${encodeURIComponent(r.session)}` : ''}`);
+    const here = `Listo, estamos en ${r.project}. ¿Qué hacemos?`;
+    push({ kind: 'event', text: here });
+    say(here, again);
+    return;
+  }
+  const going = r.tasks.filter(t => t.project), unsure = r.tasks.filter(t => !t.project);
+  await pollTasks();
+  const reached = [], missed = [];
+  for (const t of going) {
+    if (going.length === 1) setTarget(t.project);
+    const who = await deliver(t, going.length > 1);
+    if (who) reached.push(going.length === 1 ? who : spokenName(t.project)); else missed.push(spokenName(t.project));
+  }
+  for (const t of unsure) push({ kind: 'event', text: `“${t.title}”: ${t.question}`, ask: true });
+  pollTasks();
+  const words = [
+    missed.length ? `No llegó a ${inWords(missed)}.` : '',
+    !voice || !reached.length ? '' : reached.length === 1 ? `Listo, se lo pasé ${reached[0]}.` : `Listo, anoté ${reached.length}: ${inWords(reached)}.`,
+    unsure.length === 1 ? unsure[0].question : unsure.length ? `Y ${unsure.length} no sé a dónde van: están en la lista.` : '',
+  ].filter(Boolean).join(' ');
+  if (words) say(words, again); else again();
+}
+
+// Sends one task. Answers who got it, or nothing if it did not get there: it stays on the list
+// either way, with what went wrong.
+async function deliver(t, quiet = false) {
+  const { project, session, text, voice, context: earlier, why } = t;
+  const who = session ? `a ${session}, en ${project}` : `al líder de ${project}`;
+  if (!quiet && (!ctx?.route?.session || ctx.route.project !== project)) go(`/p/${encodeURIComponent(project)}`);
+  push({ kind: 'event', text: `Va ${who}${why ? `: ${why}` : '.'}` });
+  set({ phase: 'starting', focus: session || 'master' });
+  const failed = (message) => {
+    set({ phase: 'idle' });
+    push({ kind: 'event', text: message, bad: true });
+    api.taskSent({ id: t.id, project, error: message }).catch(() => {});
+    return '';
+  };
+  let lead = session || 'master';
+  if (!session) {
+    try {
+      const l = await api.lead(project);
+      if (l.started) push({ kind: 'event', text: l.started === 'start' ? `Arranqué el líder de ${project}.` : `Desperté al líder de ${project}.` });
+      lead = l.lead || 'master';
+    } catch (e) { return failed(`No pude arrancar el líder de ${project}: ${e.message}`); }
   }
   set({ phase: 'sending' });
   try {
     sentAt = Math.floor(Date.now() / 1000);
-    leadName = lead;
-    const r = await api.act('fleet_send', { project, session: lead, prompt: frame(text, voice) });
+    const words = earlier ? `Lo que dije antes: ${earlier}\n\n${text}` : text;
+    const r = await api.act('fleet_send', { project, session: lead, prompt: frame(words, voice) });
     if (r.queued) push({ kind: 'event', text: r.queued === 'question' ? 'Quedó en cola: el líder tiene una pregunta pendiente.' : 'Quedó en cola: el líder termina su turno y lo toma.' });
     set({ phase: 'idle' });
-    if (voice) say(`Listo, se lo pasé al líder de ${project}.`, again); else again();
-  } catch (e) {
-    set({ phase: 'idle' });
-    push({ kind: 'event', text: `No llegó: ${e.message}`, bad: true });
+    await api.taskSent({ id: t.id, project, session: lead });
+    return who;
+  } catch (e) { return failed(`No llegó a ${project}: ${e.message}`); }
+}
+
+// ── the list, and what comes back from it ───────────────────────────────────────────────
+// Replies are read one after another, each saying where it comes from. A second reply used to
+// cut the first one off, and one from a project no longer on screen was never read at all.
+let heardUpTo = null;     // task id -> ts of the last reply taken in; null until the first load
+let toRead = [];
+const lastTs = (t) => t.replies.reduce((n, r) => Math.max(n, r.ts), 0);
+
+export async function pollTasks() {
+  let tasks;
+  try { ({ tasks } = await api.tasks()); } catch { return; }
+  set({ tasks });
+  if (!heardUpTo) { heardUpTo = new Map(tasks.map(t => [t.id, lastTs(t)])); return; }
+  for (const t of tasks) {
+    const news = t.replies.filter(r => r.ts > (heardUpTo.get(t.id) || 0));
+    if (!news.length) continue;
+    heardUpTo.set(t.id, lastTs(t));
+    // With two things open at the same place there is no telling which one this answers: the
+    // project is certain, the task is not, so only the project is claimed.
+    const sure = !t.hidden && tasks.filter(x => !x.hidden && x.project === t.project && x.session === t.session).length === 1;
+    for (const r of news) push({ kind: 'ai', text: r.text, project: t.project, session: t.session, title: sure ? t.title : '' });
+    const from = `De ${spokenName(t.project)}${sure ? `, sobre ${t.title}` : ''}.`;
+    toRead = [...toRead.filter(x => x.id !== t.id), { id: t.id, text: `${from} ${news[news.length - 1].text}` }];
   }
+  readNext();
+}
+function readNext() {
+  if (!toRead.length || mic || S.phase !== 'idle' || document.hidden) return;
+  const [next, ...rest] = toRead;
+  toRead = rest;
+  say(next.text, () => { again(); readNext(); });
 }
 
 // ── watching: the target's fleet, and the lead's replies ────────────────────────────────
-let prev = null, sentAt = 0, seenAi = 0, leadName = 'master', lastGo = 0, loop = null;
-function resetWatch() { prev = null; seenAi = Math.floor(Date.now() / 1000); }
+let prev = null, sentAt = 0, lastGo = 0, loop = null, taskLoop = null;
+function resetWatch() { prev = null; }
 
 async function tick() {
   if (!S.target || document.hidden) return;
@@ -224,22 +312,16 @@ async function tick() {
       if (S.follow && worth && !c.lead && Date.now() - lastGo > 3000) { lastGo = Date.now(); go(`/p/${encodeURIComponent(project)}/s/${encodeURIComponent(c.name)}`); }
     }
   }
-  if (!sentAt) return;
-  let s;
-  try { s = await api.session(project, leadName); } catch { return; }
-  const fresh = (s.messages || []).filter(m => m.role === 'assistant' && m.ts > seenAi && m.ts >= sentAt - 5);
-  if (!fresh.length) return;
-  seenAi = Math.max(...fresh.map(m => m.ts));
-  for (const m of fresh) push({ kind: 'ai', text: m.text, project });
-  if (!mic) say(fresh[fresh.length - 1].text, again);
 }
 
 export function bind(next) {
   ctx = next;
   if (!loop) {
     loop = setInterval(tick, 2500);
+    taskLoop = setInterval(pollTasks, 3000);
+    pollTasks();
     resetWatch();
     voiceStatus(true).then(vs => { set({ vs }); if (vs.hear?.ready) warmVad(); });
   }
 }
-export function unbind() { stop(); clearInterval(loop); loop = null; ctx = null; }
+export function unbind() { stop(); clearInterval(loop); clearInterval(taskLoop); loop = null; heardUpTo = null; toRead = []; ctx = null; }
