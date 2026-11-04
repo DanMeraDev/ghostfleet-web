@@ -18,7 +18,7 @@ const VERBS = {
   fleet_pause: 'pausó', fleet_resume: 'reanudó', fleet_wake: 'despertó', fleet_reopen: 'reabrió',
   fleet_spawn: 'creó la sesión', fleet_stop: 'detuvo', fleet_rename: 'renombró', fleet_worktree_remove: 'borró el worktree',
   fleet_unqueue: 'sacó de la cola un mensaje de', assign: 'cambió el responsable de', login: 'entró', setup: 'creó las cuentas',
-  add_user: 'agregó a', password: 'cambió su contraseña',
+  add_user: 'agregó a', password: 'cambió su contraseña', auto_save: 'guardó la automatización', auto_delete: 'borró la automatización',
 };
 const RESULT = { ran: ['hecho', 'good'], refused: ['rechazado', 'bad'], changed: ['el pedido cambió', 'warn'] };
 
@@ -46,7 +46,8 @@ export function Activity({ ctx }) {
                 <span class="when">{clock(r.ts)}</span>
                 <Avatar user={u} size={20} />
                 <span class="grow"><b>{u?.name || r.user}</b> {VERBS[r.verb] || r.verb} {target ? <b>{target}</b> : null}
-                  {r.project ? <span class="muted"> · {r.project}</span> : null}</span>
+                  {r.project ? <span class="muted"> · {r.project}</span> : null}
+                  {r.via ? <span class="tag">⚡ {r.via}</span> : null}</span>
                 <span class={`badge ${rk}`}>{rl}</span>
               </summary>
               {detail ? <p class="log-detail">“{String(detail)}”</p> : null}

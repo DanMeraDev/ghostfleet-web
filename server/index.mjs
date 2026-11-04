@@ -13,6 +13,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ATTACH_MAX_BYTES } from './attach.mjs';
+import { createEngine, askAI } from './automations.mjs';
+import { describeTrigger } from '../shared/automations.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -55,6 +57,12 @@ const now = () => Math.floor(Date.now() / 1000);
 const file = (n) => path.join(DATA, n);
 const readJson = (n, d) => { try { return JSON.parse(fs.readFileSync(file(n), 'utf8')); } catch { return d; } };
 const writeJson = (n, v) => { const f = file(n), tmp = `${f}.tmp`; fs.writeFileSync(tmp, JSON.stringify(v, null, 2), { mode: 0o600 }); fs.renameSync(tmp, f); };
+const appendLine = (n, row) => fs.appendFileSync(file(n), JSON.stringify(row) + '\n', { mode: 0o600 });
+function readLines(n, limit) {
+  let lines = [];
+  try { lines = fs.readFileSync(file(n), 'utf8').trim().split('\n').filter(Boolean); } catch {}
+  return lines.slice(-limit).reverse().map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // ── people ──────────────────────────────────────────────────────────────────────────────
@@ -136,12 +144,8 @@ function seedDemoOwners() {
   };
   saveState();
 }
-function audit(row) { fs.appendFileSync(file('activity.jsonl'), JSON.stringify({ ts: now(), ...row }) + '\n', { mode: 0o600 }); }
-function activity(limit = 200) {
-  let lines = [];
-  try { lines = fs.readFileSync(file('activity.jsonl'), 'utf8').trim().split('\n').filter(Boolean); } catch {}
-  return lines.slice(-limit).reverse().map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-}
+const audit = (row) => appendLine('activity.jsonl', { ts: now(), ...row });
+const activity = (limit = 200) => readLines('activity.jsonl', limit);
 
 // ── the verbs, by MCP tool name — the allowlist IS the enforcement ───────────────────────
 const TOOLS = {
@@ -207,6 +211,28 @@ async function localAct(tool, a) {
   if (!Number.isInteger(at) || at < now() + 20 || at > now() + 14 * 86400) throw httpErr(400, 'la hora tiene que ser en el futuro y dentro de 14 días');
   const msg = String(a.msg || 'continúa').trim().slice(0, 4000) || 'continúa';
   return fleet.schedule(a.project, a.session, at, msg);
+}
+// One verb, by whoever asked: a person's click or an automation (`via`, its name). The same
+// allowlist, checks, owners and activity row either way — an automation is not a back door.
+async function perform(userId, tool, rawArgs, { confirm = false, owner, via } = {}) {
+  const { args, v } = buildArgs(tool, rawArgs);
+  if (v.confirm && confirm !== true) throw httpErr(428, `${tool} necesita confirmación`);
+  // An answer names the prompt it answers: the page drew a pane polled a moment ago, and a
+  // "1" + Enter landing after the prompt is gone becomes a MESSAGE in the composer.
+  if (tool === 'fleet_answer' && !args.expect)
+    return { ok: false, changed: true, text: 'el pedido ya no está en pantalla; nada se envió.' };
+  const r = v.local ? await localAct(tool, args) : await fleet.act(tool, args);
+  const subject = args.session || args.name || args.path || '-';
+  if (r.ok && tool === 'fleet_spawn') { state.owners[key(args.project, args.name)] = String(owner || userId); saveState(); }
+  if (r.ok && tool === 'fleet_rename') {
+    const from = key(args.project, args.session), to = key(args.project, args.new_name);
+    if (state.owners[from]) { state.owners[to] = state.owners[from]; delete state.owners[from]; saveState(); }
+  }
+  if (r.ok && tool === 'fleet_stop') { delete state.owners[key(args.project, args.session)]; saveState(); }
+  audit({ user: userId, verb: tool, project: args.project, subject, ...(via ? { via } : {}),
+          args: Object.fromEntries(Object.entries(args).map(([k, val]) => [k, typeof val === 'string' ? val.slice(0, 500) : val])),
+          result: r.changed ? 'changed' : r.ok ? 'ran' : 'refused', output: String(r.text || '').slice(0, 500) });
+  return r;
 }
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png',
                 '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2',
@@ -382,25 +408,37 @@ async function route(req, res, url) {
 
   if (p === '/api/act' && req.method === 'POST') {
     const b = await body(req);
-    const tool = String(b.tool || '');
-    const { args, v } = buildArgs(tool, b.args);
-    if (v.confirm && b.confirm !== true) throw httpErr(428, `${tool} necesita confirmación`);
-    // An answer names the prompt it answers: the page drew a pane polled a moment ago, and a
-    // "1" + Enter landing after the prompt is gone becomes a MESSAGE in the composer.
-    if (tool === 'fleet_answer' && !args.expect)
-      return send(res, 409, { ok: false, changed: true, text: 'el pedido ya no está en pantalla; nada se envió.' });
-    const r = v.local ? await localAct(tool, args) : await fleet.act(tool, args);
-    const subject = args.session || args.name || args.path || '-';
-    if (r.ok && tool === 'fleet_spawn') { state.owners[key(args.project, args.name)] = String(b.owner || me.id); saveState(); }
-    if (r.ok && tool === 'fleet_rename') {
-      const from = key(args.project, args.session), to = key(args.project, args.new_name);
-      if (state.owners[from]) { state.owners[to] = state.owners[from]; delete state.owners[from]; saveState(); }
-    }
-    if (r.ok && tool === 'fleet_stop') { delete state.owners[key(args.project, args.session)]; saveState(); }
-    audit({ user: me.id, verb: tool, project: args.project, subject,
-            args: Object.fromEntries(Object.entries(args).map(([k, val]) => [k, typeof val === 'string' ? val.slice(0, 500) : val])),
-            result: r.changed ? 'changed' : r.ok ? 'ran' : 'refused', output: String(r.text || '').slice(0, 500) });
+    const r = await perform(me.id, String(b.tool || ''), b.args, { confirm: b.confirm === true, owner: b.owner });
     return send(res, r.changed ? 409 : r.ok ? 200 : 400, r);
+  }
+
+  if (p === '/api/automations' && req.method === 'GET') return send(res, 200, autos.view(me.id));
+  if (p === '/api/automations' && req.method === 'POST') {
+    const b = await body(req);
+    const a = autos.upsert(me.id, b.automation);
+    audit({ user: me.id, verb: 'auto_save', subject: a.name, result: 'ran', output: `${describeTrigger(a.trigger)} · ${a.steps.length} paso(s)${a.enabled ? '' : ' · apagada'}` });
+    return send(res, 200, { ok: true, automation: a });
+  }
+  if (p === '/api/automations/delete' && req.method === 'POST') {
+    const b = await body(req);
+    const a = autos.remove(me.id, String(b.id || ''));
+    audit({ user: me.id, verb: 'auto_delete', subject: a.name, result: 'ran' });
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/api/automations/run' && req.method === 'POST') {
+    const b = await body(req);
+    const r = await autos.runNow(me.id, String(b.id || ''));
+    return send(res, 200, { ok: r.ok, text: r.text || (r.ok ? 'listo' : 'falló'), steps: r.steps || [] });
+  }
+  if (p === '/api/automations/ai' && req.method === 'POST') {
+    const b = await body(req);
+    const messages = (Array.isArray(b.messages) ? b.messages : []).filter(m => m && m.text).map(m => ({ role: m.role === 'ai' ? 'ai' : 'user', text: String(m.text) }));
+    if (!messages.length) throw httpErr(400, 'escribe qué quieres automatizar');
+    let projects = [];
+    try { projects = await fleet.projects(); } catch {}
+    const nowText = new Date().toLocaleString('es', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const r = await askAI({ messages, draft: b.draft || null, projects, nowText });
+    return send(res, r.ok ? 200 : 502, r);
   }
   if (p === '/api/demo/reset' && req.method === 'POST' && MODE === 'demo') {
     fleet.reset(); seedDemoOwners();
@@ -408,6 +446,10 @@ async function route(req, res, url) {
   }
   throw httpErr(404, `no existe ${p}`);
 }
+
+// Automations run as the person who made them, through perform() like any click.
+const autos = createEngine({ fleet, readJson, writeJson, appendLine, readLines, perform, users: () => users });
+autos.start();
 
 const server = http.createServer(async (req, res) => {
   if (req.headers.host && !HOSTS.has(hostName(req.headers.host)))

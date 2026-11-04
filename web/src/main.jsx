@@ -1,5 +1,5 @@
 import { render } from 'preact';
-import { useState, useEffect, useMemo, useCallback } from 'preact/hooks';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
 import { api } from './api.js';
 import { Setup, Login } from './auth.jsx';
 import { ProjectView } from './project.jsx';
@@ -9,6 +9,7 @@ import { UsageMeter, UsageChips } from './usage.jsx';
 import { Assistant, Ship, VoiceBar } from './assistant.jsx';
 import { bind, unbind } from './agent.js';
 import { FleetMap } from './map.jsx';
+import { Automations, noticesSeen } from './automations.jsx';
 import './styles.css';
 
 // Hash routes, so the back button works and a link pasted to a teammate opens the same view.
@@ -17,6 +18,7 @@ function parse(hash) {
   if (parts[0] === 'p' && parts[1]) return { view: 'project', project: parts[1], session: parts[2] === 's' ? parts[3] : null };
   if (parts[0] === 'actividad') return { view: 'activity' };
   if (parts[0] === 'mapa') return { view: 'map' };
+  if (parts[0] === 'automatizaciones') return { view: 'autos', id: parts[1] || null };
   if (parts[0] === 'ajustes') return { view: 'settings' };
   return { view: 'home' };
 }
@@ -26,7 +28,7 @@ function useRoute() {
   return r;
 }
 
-function Sidebar({ ctx, route, projects, open, onClose, onAssistant, usage }) {
+function Sidebar({ ctx, route, projects, open, onClose, onAssistant, usage, notices }) {
   const [q, setQ] = useState('');
   const list = (projects || [])
     .filter(p => !q || p.name.toLowerCase().includes(q.toLowerCase()))
@@ -38,6 +40,7 @@ function Sidebar({ ctx, route, projects, open, onClose, onAssistant, usage }) {
       <div class="brand"><Logo /><div><b>ghostfleet</b><small>{ctx.mode === 'demo' ? 'modo demo' : 'tu flota'}</small></div></div>
       {link('/', route.view === 'home', <><span class="ico">⌂</span> Inicio {need ? <span class="badge bad">{need}</span> : null}</>)}
       {link('/mapa', route.view === 'map', <><span class="ico">⛵</span> Mapa en vivo</>)}
+      {link('/automatizaciones', route.view === 'autos', <><span class="ico">⚡</span> Automatizaciones {notices ? <span class="badge warn" title="Avisos sin ver">{notices}</span> : null}</>)}
       {link('/actividad', route.view === 'activity', <><span class="ico">≡</span> Actividad</>)}
       <button class="nav as-nav" onClick={() => { onClose(); onAssistant(); }}><span class="ico">🎙</span> Asistente de voz</button>
       <div class="side-sec">
@@ -75,6 +78,16 @@ function Shell({ me, mode, onLogout }) {
   useEffect(() => { loadUsers(); }, []);
   const { data: pj } = usePoll(() => api.projects(), 4000, []);
   const { data: usage } = usePoll(() => api.usage(), 15000, []);
+  // Automation notices (a run that failed or was skipped) reach whoever is on any page.
+  const { data: autos } = usePoll(() => api.automations(), 20000, []);
+  const fresh = (autos?.notices || []).filter(n => n.at > noticesSeen());
+  const told = useRef(Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const news = fresh.filter(n => n.at > told.current);
+    if (!news.length) return;
+    told.current = Math.max(...news.map(n => n.at));
+    for (const n of news.slice(0, 3)) toast(`⚡ ${n.text}`, n.kind === 'bad' ? 'bad' : '');
+  }, [autos]);
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users]);
   const ctx = {
     me, mode, users, usersById,
@@ -89,6 +102,7 @@ function Shell({ me, mode, onLogout }) {
   let main;
   if (route.view === 'project') main = <ProjectView key={route.project} ctx={ctx} project={route.project} session={route.session} />;
   else if (route.view === 'activity') main = <Activity ctx={ctx} />;
+  else if (route.view === 'autos') main = <Automations key={route.id || 'list'} ctx={ctx} projects={pj?.projects ?? null} id={route.id} />;
   else if (route.view === 'map') main = <FleetMap ctx={ctx} projects={pj?.projects ?? null} />;
   else if (route.view === 'settings') main = <Settings ctx={ctx} onUsers={loadUsers} />;
   else main = <Home ctx={ctx} projects={pj?.projects ?? null} />;
@@ -101,7 +115,7 @@ function Shell({ me, mode, onLogout }) {
         <span class="topbar-end"><UsageChips data={usage} onClick={() => setMenu(true)} />{need ? <a class="badge bad" href="#/">{need}</a> : null}</span>
       </div>
       {menu ? <div class="side-scrim" onClick={() => setMenu(false)} /> : null}
-      <Sidebar ctx={ctx} route={route} usage={usage} projects={pj?.projects ?? null} open={menu} onClose={() => setMenu(false)} onAssistant={() => setAsOpen(true)} />
+      <Sidebar ctx={ctx} route={route} usage={usage} notices={fresh.length} projects={pj?.projects ?? null} open={menu} onClose={() => setMenu(false)} onAssistant={() => setAsOpen(true)} />
       <main class="main">
         {mode === 'demo' ? <div class="demo-bar">Modo demo · datos de ejemplo, puedes tocar todo sin miedo</div> : null}
         {main}

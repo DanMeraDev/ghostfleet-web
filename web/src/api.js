@@ -38,6 +38,11 @@ export const api = {
   usage: () => call('GET', '/api/usage'),
   lead: (project) => call('POST', '/api/lead', { project }),
   speak: (text) => call('POST', '/api/speak', { text }),
+  automations: () => call('GET', '/api/automations'),
+  saveAutomation: (automation) => call('POST', '/api/automations', { automation }),
+  deleteAutomation: (id) => call('POST', '/api/automations/delete', { id }),
+  runAutomation: (id) => call('POST', '/api/automations/run', { id }),
+  automationAI: (messages, draft) => call('POST', '/api/automations/ai', { messages, draft }),
   // The file's own bytes as the body (no base64), where it goes in the query.
   attach: async (project, session, file) => {
     if (file.size > ATTACH_MAX_BYTES) throw new Error(`${file.name} pesa más de ${ATTACH_MAX_BYTES / 1048576} MB`);

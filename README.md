@@ -39,6 +39,21 @@ Para desarrollo con recarga en caliente: `pnpm dev:demo` o `pnpm dev`, y abre <h
 - **Adjuntar archivos o imágenes** en el chat de cualquier sesión: 📎, arrastrar o pegar (hasta 10 por
   mensaje, 25 MB cada uno). Se guardan donde ghostfleet guarda las fotos del celular
   (`$CLAUDE_FLEET_DIR/attach/<socket>.<sesión>/`, con cuota por sesión) y el mensaje le pasa las rutas.
+- **Automatizaciones** (estilo n8n, en el menú): un disparador y acciones en orden, armadas arrastrando
+  bloques (o tocándolos, en el celular) o pidiéndoselas en una frase a la pestaña de IA, que llena los
+  mismos bloques para que los revises antes de guardar.
+  - *Disparadores*: a una hora (ciertos días, una vez, o cada N minutos/horas) o un evento de una
+    sesión (termina, te necesita, empieza, se queda sin cupo, se cae), con un tiempo mínimo entre
+    disparos para la misma sesión.
+  - *Acciones*: mandar un prompt, crear una sesión, pausar, reanudar, despertar, interrumpir, reabrir,
+    detener (pide confirmación al guardar), *seguir solo si…* la sesión está en cierto estado, avisarme y
+    esperar. En prompts y nombres: `{fecha}` `{hora}` `{proyecto}` `{sesion}`.
+  - Corren con el nombre de quien las creó y por las mismas verificaciones que un clic (quedan en
+    *Actividad* con ⚡). Cada una es *personal* o *de equipo*.
+  - **Si el servidor estaba apagado a la hora**, no se corre tarde: queda como *se saltó* y te avisa.
+    Una que se dispara 30 veces en una hora se apaga sola (un bucle) y avisa.
+  - La IA es un `claude -p` de una sola vuelta, sin herramientas ni MCP, que solo escribe el borrador;
+    no queda abierto gastando memoria.
 - **Responsable y presencia**: cada sesión tiene un dueño, y se ve cuando el otro está mirando o escribiendo.
 - **Actividad**: todo lo que se hizo, con nombre y hora.
 - **Asistente de voz**: le hablas al líder (`master`) del proyecto, o a Jarvis si está activado, y él
